@@ -1,0 +1,4 @@
+baseURL = "http://evankrall.com/"
+languageCode = "en-us"
+title = "Evan Krall"
+theme = "xmin"
