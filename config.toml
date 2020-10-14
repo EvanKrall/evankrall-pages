@@ -1,4 +1,4 @@
-baseURL = "http://evankrall.com/"
+baseURL = "https://www.evankrall.com/"
 languageCode = "en-us"
 title = "Evan Krall"
 theme = "xmin"
