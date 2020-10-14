@@ -175,7 +175,9 @@ I've found this frequently thinks a component is not available for assembly, eve
 
 ## Within JLCPCB order flow...
 
-Follow the instructions below for sending Gerber/BOM/PNP files to JLCPCB. When you get to the TODO phase, select components.
+Follow the instructions below for sending Gerber/BOM/PNP files to JLCPCB.
+When you get to the part review phase, select your components.
+More details are below.
 
 # Sending the files to JLCPCB
 
