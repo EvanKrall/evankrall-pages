@@ -252,6 +252,8 @@ If a part number is missing, you can click the little magnifying glass icon in t
 This search interface is more limited than the [main parts search page](https://jlcpcb.com/parts), so you may want to cross-reference.
 Check to make sure all the parts are `Basic Part`s, except for the ones you expect to be extended parts.
 
+### Finish up
+
 Click Next, review everything, and click Save to Cart.
 If you want to change the number of PCBs, it's easier to do that after you've saved to cart than clicking `Go Back` all the way to the first page and redoing all the previous steps.
 
