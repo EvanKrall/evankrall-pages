@@ -2,3 +2,9 @@ baseURL = "https://www.evankrall.com/"
 languageCode = "en-us"
 title = "Evan Krall"
 theme = "xmin"
+
+
+[markup]
+  [markup.goldmark]
+    [markup.goldmark.renderer]
+      unsafe = true
