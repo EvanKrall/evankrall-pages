@@ -4,14 +4,15 @@ date: 2022-12-16T21:27:00-08:00
 draft: true
 ---
 
-_**tl;dr:** For high-speed signals, EDA programs should provide a mode where you can simultaneously route a signal trace on one layer and a wider ground/power trace for the signal's return current on an adjacent inner layer, directly under the signal trace; essentially routing a whole microstrip transmission line._
+_**tl;dr:** For high-speed signals, EDA programs should provide a mode where you can simultaneously route a signal trace on one layer and a wider ground/power trace for the signal's return current on an adjacent layer, directly under the signal trace; essentially routing a whole microstrip transmission line._
 
 # What's a return current path?
 
 If you aren't familiar with designing high-speed digital circuits, you might think of digital signals as time-varying voltages, and not think much about current.
 After all, digital input pins are often high-impedance, meaning they draw negligible current.
 However, with higher frequency signals, capacitance in your circuit means that the transmitter needs to push or pull nonzero current into/out of the wire to get the voltage on the line to change, even if the receiver has a high-impedance input.
-Furthermore, to reduce the possibility of [signal reflections](https://en.wikipedia.org/wiki/Reflections_of_signals_on_conducting_lines) that distort the incoming signal, high-speed receivers will typically have somewhat low input impedance of e.g. 50 to 200 ohms, which means that for a 3.3V signal, your receiver might be drawing a few dozen milliamps.
+Furthermore, to reduce the possibility of [signal reflections](https://en.wikipedia.org/wiki/Reflections_of_signals_on_conducting_lines) that distort the incoming signal, high-speed receivers will typically have somewhat low input impedance of e.g. 50 to 200 ohms, which allows nonzero current to flow.
+For example, [LVDS](https://en.wikipedia.org/wiki/Low-voltage_differential_signaling) signaling tends to pass about 3.5mA.
 
 All this current **must return to the transmitter somehow**, as all current must flow in a loop.
 This loop will typically consist of:
@@ -24,12 +25,12 @@ This loop will typically consist of:
  - The ground conductors between transmitter and receiver
 
 {{<
-    figure caption="Simplified schematic diagram for a digital transmitter and receiver, showing the current flow for a rising edge. In this model, I'm assuming that the V<sub>CC</sub> connection between transmitter and receiver has higher inductance than the ground connection. Additionally, I'm assuming that the power supply has higher inductance than the decoupling capacitor for the transmitter."
+    figure caption="Simplified schematic diagram for a digital transmitter and receiver, showing the current flow for a rising edge. In this model, I'm assuming that the V<sub>CC</sub> connection between transmitter and receiver has higher inductance than the ground connection, which would be the case if V<sub>CC</sub> is handled by traces and ground is handled by a copper pour. Additionally, I'm assuming that the battery has higher inductance than the decoupling capacitor for the transmitter."
     src="/img/transmission-lines/signal_flow.png"
     >}}
 
 You may be familiar with the maxim that current follows the path of least resistance.
-(In reality, it follows all parallel paths, with current inversely proportional to resistance.)
+(In reality, it follows _all_ parallel paths, with current inversely proportional to resistance.)
 To be more accurate, we have to say that current follows the path(s) of least [impedance](https://en.wikipedia.org/wiki/Electrical_impedance), which generalizes the concept of resistance to describe how current flows in circuits with capacitance and inductance.
 Any wire or PCB trace has nonzero inductance, which affects impedance more and more as frequency increases, causing inductance to have much stronger effects than resistance at high frequencies.
 
@@ -39,11 +40,11 @@ that is, the return current "wants" to travel in a path that's as close as possi
 If your circuit board has a [ground plane](https://en.wikipedia.org/wiki/Ground_plane#Printed_circuit_boards) below your signal trace, the return current will tend to follow a path directly underneath the signal trace, but spread out slightly.
 
 {{< figure
-    caption="The faint lines show the approximate path of the return current through a ground plane beneath a signal trace."
+    caption="The faint lines show the approximate path of the return current through a ground plane beneath a trace carrying a high-speed signal."
     src="/img/transmission-lines/current_path_on_ground_plane.png"
     >}}
 
-If you don't have a ground or power plane, and instead use traces to connect ground/power between your different ICs, then the return current for your signal will tend to travel in the ground traces nearest to the signal trace.
+If you don't have a ground or power plane, and instead use traces to connect ground/power between your different ICs, then the return current for your signal will tend to travel in the ground/power traces nearest to the signal trace.
 This tends to lead to higher inductance and a less consistent impedance as the signal propagates through the trace.
 Impedance changes can cause your signal to be reflected, distorting the signal that your receiver sees.
 The increased loop area traced out by your signal/return path will lead to [Electromagnetic interference (EMI)](https://en.wikipedia.org/wiki/Electromagnetic_interference) and [cross-talk](https://en.wikipedia.org/wiki/Crosstalk) between nearby signals.
