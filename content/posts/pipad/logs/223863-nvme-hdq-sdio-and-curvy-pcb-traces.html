@@ -1,0 +1,61 @@
+---
+title: 'Pipad: NVMe, HDQ, SDIO, and curvy PCB traces'
+date: 2023-10-04T07:15:00-07:00
+draft: false
+---
+<p><em>View or comment on this project log on <a href="https://hackaday.io/project/177256/log/223863-nvme-hdq-sdio-and-curvy-pcb-traces">Hackaday.io</a></em></p>
+
+<p>I apologize for the long delay since the last update. I'm still here, making spurts of progress here and there.</p>
+<p>Since the last log, I've worked on a number of things:<br/></p>
+<ol><li>Figuring out why NVMe / PCIe wasn't working</li><li>Successfully getting the Pi to talk to the battery pack through TI's HDQ protocol.</li><li>Unsuccessfully attempting to get the Pi to talk to the iPad's Wifi chip through SDIO.</li><li>Redesigning the PCB to fix some earlier issues.</li></ol>
+<h1>NVMe</h1>
+<p>On my previous revision of the PCB, I had added a M.2 slot to allow for a 2230-sized NVMe SSD -- these are getting pretty cheap these days (around $15 for 128GB), and should be faster and more durable than eMMC.</p>
+<p>When I tested this slot by putting an SSD in it, I couldn't see anything with lspci, etc. I tried observing with my oscilloscope and didn't see anything happening, but PCIe is a little beyond the bandwidth of my scope.</p>
+<p>Fortunately, around this time, Arya Voronova was publishing her PCIe for Hackers series on Hackaday, and a line in <a href="https://hackaday.com/2023/03/23/pcie-for-hackers-link-anatomy">this article</a> caught my attention:</p>
+<blockquote>As you might expect, RX on one end connects to TX on another end, and vice-versa – it’s just like UART, but spicy.</blockquote>
+<p>Had I gotten TX and RX wrong? Sure enough, I had. The schematic symbol I used for the M.2 slot was labeled from the perspective of the card, not the host, so I had wired the host's TX line to the card's TX line. Don't trust random symbols — check the datasheet!</p>
+<p>I designed a little interposer board that fits in the M.2 slot, swaps TX and RX, and has another M.2 slot on top where you can put the SSD. This (and some reflow of a few bad solder joints, a perennial problem with this project) fixed the issue and got NVMe working perfectly.</p>
+<p>The interposer board is too big to fit inside the iPad case, but it let me verify the fix before ordering and assembling a whole new board revision.</p>
+<h1>SWI? HDQ? 1-Wire?</h1>
+<p>The iPad's battery connector has a pin named BATT_SWI_CONN_R, which is used for serial communication between the processor and the battery. From what I discovered in online research, Apple devices from this era all used TI battery controller chips which speak the HDQ protocol, a proprietary single-wire interface that only seems to show up on these TI battery controllers. For reasons, Apple decided to rename this "SWI" (presumably, "single-wire interface") rather than just calling it HDQ.</p>
+<p>I wanted to make sure I could get the Pi talking to the battery with just a trace wired between a GPIO pin and the battery's SWI pad. If I needed extra hardware to make this communication work, it would be nice to know <em>before</em> ordering a board revision.</p>
+<p>First things first, I wanted to double check that the battery actually spoke HDQ, so I flashed <a href="https://github.com/mozzwald/hdq-batt-status">this Arduino sketch from mozzwald</a> onto an Arduino Uno and hooked it up. This worked perfectly:</p>
+<pre>
+iPhone 4G Battery Detected
+Device: bq27541
+Firmware: v1.25
+Hardware: 0xB5
+Remaining Capacity: 1166 mAH
+Full Charge Capacity: 6264 mAH
+Design Capacity: 6500 mAH
+Time to empty: N/A, not discharging
+Time to full: N/A, not charging
+State of Charge: 19%
+Battery Voltage: 3.73V (3730mV)
+Temperature: 24.00�C / 75.38�F / 2971 raw
+Charge Cycle Count: 146 times</pre>
+<p>(Looks like the battery thinks it's full-charge capacity is 96% what it was when it was new. Pretty good for a 13-year-old battery!)</p>
+<p>Moving back to Pi land, I hooked up some jumper wires between a Pi 4 and the battery's ground / SWI contacts, and set about trying to get the Pi to speak HDQ.</p>
+<p>In the Linux kernel, there's a driver called <a href="https://github.com/raspberrypi/linux/blob/rpi-5.15.y/drivers/power/supply/bq27xxx_battery_hdq.c">bq27xxx_battery_hdq</a>, which sounds perfect -- I want to talk to a BQ27541 over HDQ. However, it turns out that this uses the Linux kernel's 1wire subsystem. HDQ and 1wire aren't actually compatible -- they're close enough at the physical layer that TI made their OMAP processors capable of speaking either, and the Linux driver for this hardware can set it into HDQ mode. This isn't helpful for me, though, since the Pi doesn't use an OMAP processor.</p>
+<p>However, there's a w1-gpio implementation which can use an arbitrary GPIO pin to implement 1wire. (Within the linux kernel, the shorthand used for 1wire is w1, presumably because you can't start C identifiers with a number.). I set about patching this to speak HDQ well enough for the bq27xxx_battery_hdq driver. It didn't immediately work -- some transactions would work okay, but some would fail.</p>
+<p>To help figure out what it was doing wrong (and as an interesting diversion), I ended up also writing a Saleae <a href="https://github.com/EvanKrall/pwm_serial_analyzer">plugin for decoding HDQ</a> (or, really, any serial protocol that encodes 0s and 1s as short/long pulses). This was helpful in diagnosing issues, especially when I started toggling a different GPIO pin during different sections of my patched w1-gpio code so I could follow along with the execution of my driver code.</p>
+<p><img src="/img/pipad/9410951696476754115.png" style="display: block; margin: auto;"/></p>
+<figcaption>ignore the pin names on the left side of the screen -- sometimes I'm too lazy to update these. A low-valued series resistor between the battery and the GPIO pin makes it so the bq27541 can't quite pull the voltage all the way down to zero. This helped me identify which device was transmitting at any given time.</figcaption>
+<p>The code isn't pretty (definitely not going to get merged into the mainline kernel in this state), and it almost won't speak 1Wire anymore, but I have a <a href="https://github.com/EvanKrall/raspberrypi-linux/commit/354e1a71079559d1b2cded459980322dfb2adcc5">driver that works</a>!</p>
+<h1>Why won't the BCM4329 respond on SDIO?</h1>
+<p>The iPad's BCM4329 wifi/bluetooth controller is not on its logic board, it's on a skinny PCB that runs down the middle of the iPad from the logic board at the top to the 30-pin connector at the bottom. It would be convenient to be able to use this, rather than the CM4's wifi, because it's already in the right place for the iPad's antenna connectors. If I were to use a wifi CM4, I'd need to find an antenna extension cable / splitter to go from the CM4's single antenna port to the iPad's two antennas (or pick one and deal with poor reception if the iPad is facing the wrong way).</p>
+<p>Using a breakout board I designed ages ago, I hooked up this PCB to the CM4IO with jumper wires. (I'm using the CM4 and CM4IO for this testing, rather than a Pi 4, because I think the SDIO is 1.8V, and you can change the IO voltage of the CM4 to 1.8V rather than needing a bunch of level shifters.)</p>
+<p>As usual, I've written a device tree overlay for the BCM4329, and I can see that the CM4 is attempting to send messages on the SDIO bus, but getting no response. As this <a href="https://community.silabs.com/s/article/linux-sdio-detection?language=en_US">excellent SiLabs article</a> explains, <br/></p>
+<blockquote>Before using a Wi-Fi part connected to the SDIO bus of a Linux system, it is necessary that the system detects the HW on the bus.<br/><br/>When detection succeeds, the kernel has retrieved the VID/PID for the device.<br/><br/>Looking for a driver matching the VID/PID is only possible if the VID/PID has been retrieved from the device.<ul><li>As as consequence, device tree changes related to your device have no effect until SDIO detection is OK.</li></ul></blockquote>
+<p>Once I can get the wifi controller to respond at all, we should be able to make some more progress.</p>
+<p>I assume one of two things is wrong:</p>
+<ol>
+<li>I'm doing something silly with the enable, wake, or power pins for the BCM4329</li>
+<li>I've already fried the BCM4329 somehow and it'll never respond</li>
+</ol>
+<p>I probably ought to put the original iPad parts back in and see if wifi still works.</p>
+<h1>Having too much fun with Kicad's "Fillet Tracks" tool</h1>
+<figure><img src="/img/pipad/8286871696485381485.png"/><figcaption>Seriously. Too much fun. I don't think I left a single track un-filleted<br/></figcaption><figure><img src="/img/pipad/9533891696658859317.png"/><figcaption>Electrons hate corners, right?</figcaption></figure></figure>
+<p>This version of the PCB fixes a few issues: the PCIe TX/RX issues mentioned above, the power switch logic, the LCD backlight driver, and certainly some other things I'm forgetting now.<br/></p>
+<p>I also added a trace for the HDQ pin, but didn't route traces for SDIO. I did include some tiny test pads on the board in case I want to connect SDIO later.<br/></p>
+<p>I've submitted my PCB order, so I expect in the next few days I'll notice some silly mistake I made in the design, or some essential part that has gone out of stock. I should probably compare my BOM and my inventory and see if I need to order anything.</p>

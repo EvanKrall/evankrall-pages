@@ -1,0 +1,97 @@
+---
+title: 'Pipad: Using ftrace to debug device tree problems'
+date: 2021-08-18T07:28:00-07:00
+draft: false
+---
+<p><em>View or comment on this project log on <a href="https://hackaday.io/project/177256/log/196672-using-ftrace-to-debug-device-tree-problems">Hackaday.io</a></em></p>
+
+<p>For the past few days, I've been trying to get the sn65ds83 driver (recently added to linux) running and talking to my board. It has been a (re-)learning experience trying to get this device tree overlay to cooperate.</p>
+<p>Following my own advice from the <a href="https://hackaday.io/project/177256-put-a-raspberry-pi-cm4-into-an-original-ipad/log/190683-attempting-to-write-a-device-tree-overlay-for-the-soundcard">last time I touched device trees</a>, I used <code>udevadm monitor</code> and <code>dmesg -w</code> to watch for kernel/udev messages while loading my overlay with <code>sudo dtoverlay pipad_screen.</code> This gave me this helpful error message:</p>
+<pre>
+[  178.309859] sn65dsi83: probe of 1-002d failed with error -2
+</pre>
+<p>From what I can tell from <a href="https://github.com/EvanKrall/raspberrypi-linux/blob/f72c9993dc5f30af3291f3208452d79819d31342/drivers/base/dd.c#L650">looking at the kernel source</a>, this implies that the <a href="https://github.com/EvanKrall/raspberrypi-linux/blob/f72c9993dc5f30af3291f3208452d79819d31342/drivers/gpu/drm/bridge/ti-sn65dsi83.c#L627">sn65dsi83_probe function</a> was returning -2. Unfortunately, the <code>sn65dsi83_probe</code> function can return errors from several different places. Fortunately, there's a kernel feature called <code>ftrace</code> that can trace every function call that happens within the kernel. The easiest way to use it is to use the <a href="https://embeddedbits.org/tracing-the-linux-kernel-with-ftrace/"><code>trace-cmd</code> command</a>, which you can install on Raspberry Pi OS with <code>apt install trace-cmd</code>. You record with <code>trace-cmd record -p function_graph</code> (with various options for filtering), then view the results with <code>trace-cmd report</code>.</p>
+<p>Supposedly, you can trace everything by just running <code>trace-cmd record -p function_graph</code> with no filter options, but when I tried this, I had a lot of dropped events and didn't see the <code>sn65dsi83_probe</code> function in the results.</p>
+<p>After learning some things about ftrace (by manually constructing a list of functions to filter on with the <code>-l</code> flag), I discovered that ftrace can only trace functions in kernel modules that are loaded before ftrace starts. Normally, the <code>ti-sn65dsi83</code> module is loaded automatically when I run <code>dtoverlay pipad_screen</code>, but that prevents ftrace from seeing it.</p>
+<p>If I manually <code>modprobe ti-sn65dsi83</code> before running <code>trace-cmd record -p function_graph -F dtoverlay pipad_screen</code>, I get no dropped events, and the trace for the <code>sn65dsi83_probe</code> function was there in the output of <code>trace-cmd report</code>:</p>
+<pre>
+sn65dsi83_probe() {
+  devm_kmalloc() {
+    __kmalloc_track_caller() {
+      kmalloc_slab();
+      should_failslab();
+    }
+    devres_add() {
+      _raw_spin_lock_irqsave() {
+        preempt_count_add();
+      }
+      _raw_spin_unlock_irqrestore() {
+        preempt_count_sub();
+      }
+    }
+  }
+  of_device_get_match_data() {
+    of_match_node() {
+      _raw_spin_lock_irqsave() {
+        preempt_count_add();
+      }
+      __of_match_node.part.0() {
+        __of_device_is_compatible() {
+          __of_find_property();
+          of_prop_next_string();
+        }
+        __of_device_is_compatible() {
+          __of_find_property();
+          of_prop_next_string();
+          of_prop_next_string();
+        }
+      }
+      _raw_spin_unlock_irqrestore() {
+        preempt_count_sub();
+      }
+    }
+  }
+  devm_gpiod_get() {
+    ...
+  }
+}</pre>
+<p>This implies that <code>sn65dsi83_probe</code> was returning immediately after the call to <code>devm_gpiod_get</code> finished. Oh, right, I never put the enable GPIO pin for the sn65dsi83 in my dts file. I figured the property would be called <code>enable</code> because that's the string being passed to <code>devm_gpiod_get</code>, but nope. From looking at documentation for other bridges, I inferred that it's <code>enable-gpios</code>.</p>
+<p>Adding <code>enable-gpios = &lt;&amp;gpio 5 0&gt;;</code> to my device tree and trying again, this time I get from dmesg -w:</p>
+<pre>
+[   95.093834] sn65dsi83: probe of 1-002d failed with error -22
+</pre>
+<p> Looking at my report, this time I see:</p>
+<pre>
+sn65dsi83_probe() {
+  devm_kmalloc() {
+    ...
+  }
+  of_device_get_match_data() {
+    ...
+  }
+  devm_gpiod_get() {
+    ...
+  }
+  of_graph_get_endpoint_by_regs() {
+    ...
+  }
+  of_property_count_elems_of_size() {
+    ...
+  }
+  of_graph_get_remote_port_parent() {
+    ...
+  }
+  of_node_put();
+}</pre>
+<p>Looks like it's failing just after <code>of_graph_get_remote_port_parent</code> and <code>of_node_put</code>. These aren't called directly from <code>sn65dsi83_probe</code>, but by <code>sn65dsi83_parse_dt</code>. Because <code>sn65dsi83_parse_dt</code> is defined as a static function, it can't be traced by ftrace, and everything it calls appears directly beneath <code>sn65dsi83_probe</code>.</p>
+<p>I think I'm being caught by <a href="https://github.com/EvanKrall/raspberrypi-linux/blob/f72c9993dc5f30af3291f3208452d79819d31342/drivers/gpu/drm/bridge/ti-sn65dsi83.c#L581-L586">this code</a>:</p>
+<pre class="hljs cpp">    ctx-&gt;dsi_lanes = of_property_count_u32_elems(endpoint, <span class="hljs-string">"data-lanes"</span>);
+    ctx-&gt;host_node = of_graph_get_remote_port_parent(endpoint);
+    of_node_put(endpoint);
+
+    <span class="hljs-keyword">if</span> (ctx-&gt;dsi_lanes &lt; <span class="hljs-number">0</span> || ctx-&gt;dsi_lanes &gt; <span class="hljs-number">4</span>)
+        <span class="hljs-keyword">return</span> -EINVAL;</pre>
+<p>Sure enough, <code>EINVAL</code> is defined as 22. This probably means I need to fix/add a <code>data-lanes</code> entry in my device tree. Looking at the sn65dsi8<strong>6</strong> driver (<strike>which is better-documented</strike> Turns out, the sn65dsi83 driver is <a href="https://github.com/torvalds/linux/blob/e058a84bfddc42ba356a2316f2cf1141974625c9/Documentation/devicetree/bindings/display/bridge/ti%2Csn65dsi83.yaml">perfectly well-documented</a>, I just didn't cherry-pick that commit onto my own kernel branch. 🤦♂️), it looks like this needs to go on the <code>endpoint</code> node, not the <code>bridge</code> node. Once I fixed this, and moved my <code>port</code> to <code>port@0</code> (instead of <code>port@1</code> which I had for some reason), I no longer get the <code>failed with error -22</code> message. Now I have no errors at all when loading the overlay.</p>
+<p>Time to figure out what the next step is, I guess.</p>
+<p>For posterity, <a href="https://gist.github.com/EvanKrall/b30dcfee3f20529daeeb50e267e2f8aa">heres a gist of my dts file</a>.</p>
+<p><span></span></p>

@@ -1,0 +1,170 @@
+---
+title: 'Pipad: Attempting to write a device tree overlay for the soundcard'
+date: 2021-03-22T03:54:00-07:00
+draft: false
+---
+<p><em>View or comment on this project log on <a href="https://hackaday.io/project/177256/log/190683-attempting-to-write-a-device-tree-overlay-for-the-soundcard">Hackaday.io</a></em></p>
+
+<p>Since my <a href="https://hackaday.io/project/177256-put-a-raspberry-pi-cm4-into-an-original-ipad/log/190208-finally-things-to-solder">last log</a>, I connected the other ends of the magnet wires to female header pins so that I can attach to my RPi 4. I really, <em>really</em> would recommend against trying to do it this way. I'm either gonna spend the board space and use 0.1" headers next time, or go for something easy to solder like an FFC so I can make a matching breakout board.</p>
+<p>In the mean time, I've tested the board a bit, and have been working on making it work under Linux.</p>
+<p>For basic testing, I used command line tools for I2C (i2cdetect, i2cset, i2cget from the i2c-tools package. From this, I was able to confirm that the codec powers up successfully, I can speak to it over i2c, and that jack detection works. (This codec can tell the difference between a TRS stereo headset and a TRRS stereo/mic headset, based on the resistance between the different pins.)</p>
+<p>I still have no idea whether I can actually make sounds with this thing, though. To get sound, I need to:</p>
+<ol><li>Toggle GPIO pins to enable the dual LDO and the codec</li><li>Configure the codec via i2c so that it knows which of its several output pins to use, and what format we'll be sending on its PCM/I2S pins.</li><li>Actually send I2S to it.</li></ol>
+<p>I could probably script all that, using python or bash or something, but since in the end I want to make this work as a fully-supported alsa/pulseaudio/whatever output, I started learning how to do this Properly™. The basic approach is to make sure the kernel has a module available for the codec, then write a "device tree overlay" describing the board.</p>
+<p>The Linux kernel source already have a driver for the TLV320AIC3104, but they aren't included by default in Raspberry Pi OS. After cloning, configuring to <a href="https://www.ti.com/tool/TLV320AIC3XSW-LINUX">enable the tlv320aic3x driver</a><span></span>, and <a href="https://www.raspberrypi.org/documentation/linux/kernel/building.md">rebuilding the kernel</a><span></span>, I have the snd_soc_tlv320aic3x module available.<span></span><br/></p>
+<p>Next, I need a device tree overlay for my board. This will tell the kernel what hardware I've attached to the computer, and if all goes well, the kernel should load and instantiate the appropriate drivers.</p>
+<p>The Raspberry Pi website has a decent page about <a href="https://www.raspberrypi.org/documentation/configuration/device-tree.md">device trees, overlays, and parameters</a>. The kernel documentation also has some useful pages about it: <a href="https://www.kernel.org/doc/html/latest/devicetree/usage-model.html">Linux and the Device Tree</a>. It's also helpful to  I <a href="https://en.wikipedia.org/wiki/Cargo_cult_programming">cargo-culted</a> my first version of my overlay, compiled it, put it in /boot/overlays, added it to config.txt, and rebooted, and... how do I know if it worked? After playing around and searching for things, I was able to find a couple useful debugging tips:</p>
+<ol>
+<li>Check dmesg for anything obvious. </li>
+<li>On Raspberry Pi devices only, you can get bootloader logs with <pre>
+sudo vcdbg log msg</pre>
+</li>
+<li><a href="https://www.raspberrypi.org/forums/viewtopic.php?t=214202">This forum post </a>recommends booting without the overlay enabled, then load the overlay at runtime with the dtoverlay command while running udevadm monitor. I've found it's also helpful to be running `dmesg -w` also.
+
+<pre>
+# in one terminal:
+dmesg -w
+# in a second terminal:
+sudo udevadm monitor
+# in a third terminal:
+sudo dtoverlay pipad</pre>
+<p>You'll find devicetree-related messages in dmesg often have the prefix "OF:", which I think refers to OpenFirmware, where the device tree concept was originally created.</p>
+<p>Unfortunately, this doesn't shorten the iteration cycle -- every time your overlay fails to properly apply, you need to reboot to get back to a clean state. (It looks like you should be able to remove an overlay with <code>dtoverlay -r</code>, but this doesn't work if your overlay doesn't apply cleanly.)</p></li></ol>
+<p>After iterations, I've settled on this .dts file:</p>
+<pre class="hljs bash">/dts-v1/;
+/plugin/;
+
+/ {
+    compatible = <span class="hljs-string">"brcm,bcm2835"</span>;
+    fragment@0 {
+        target = &lt;&amp;gpio&gt;;
+        __overlay__ {
+            aic3104_reset: aic3104_reset {
+                brcm,pins = &lt;17 27&gt;;
+                brcm,<span class="hljs-keyword">function</span> = &lt;1 1&gt;;
+                brcm,pull = &lt;1 1&gt;;
+            };
+        };
+    };
+
+    fragment@1 {
+        target-path = <span class="hljs-string">"/"</span>;
+        __overlay__ {
+
+            vcc30: fixedregulator@1 {
+                compatible = <span class="hljs-string">"regulator-fixed"</span>;
+                regulator-name = <span class="hljs-string">"fixed-supply"</span>;
+                regulator-min-microvolt = &lt;3000000&gt;;
+                regulator-max-microvolt = &lt;3000000&gt;;
+                gpio = &lt;&amp;gpio 22 1&gt;;
+                startup-delay-us = &lt;70000&gt;;
+                <span class="hljs-built_in">enable</span>-active-high;
+                vin-supply = &lt;&amp;vdd_3v3_reg&gt;;
+            };
+            vcc18: fixedregulator@2 {
+                compatible = <span class="hljs-string">"regulator-fixed"</span>;
+                regulator-name = <span class="hljs-string">"fixed-supply"</span>;
+                regulator-min-microvolt = &lt;1800000&gt;;
+                regulator-max-microvolt = &lt;1800000&gt;;
+                gpio = &lt;&amp;gpio 22 1&gt;;
+                startup-delay-us = &lt;70000&gt;;
+                <span class="hljs-built_in">enable</span>-active-high;
+                vin-supply = &lt;&amp;vdd_3v3_reg&gt;;
+            };
+
+            amp: analog-amplifier {
+                compatible = <span class="hljs-string">"simple-audio-amplifier"</span>;
+                <span class="hljs-built_in">enable</span>-gpios = &lt;&amp;gpio 17 1&gt;;
+                VCC-supply = &lt;&amp;vdd_3v3_reg&gt;;
+            };
+        };
+    };
+
+    fragment@2 {
+        target = &lt;&amp;i2c1&gt;;
+        __overlay__ {
+            tlv320aic3104: tlv320aic3104@18 {
+                <span class="hljs-comment">#sound-dai-cells = &lt;0&gt;;</span>
+                compatible = <span class="hljs-string">"ti,tlv320aic3104"</span>;
+                reg = &lt;0x18&gt;;
+
+                reset-gpios = &lt;&amp;gpio 27 0&gt;;
+
+                AVDD-supply = &lt;&amp;vcc30&gt;;
+                DRVDD-supply = &lt;&amp;vcc30&gt;;
+                DVDD-supply = &lt;&amp;vcc18&gt;;
+                IOVDD-supply = &lt;&amp;vdd_3v3_reg&gt;;
+            };
+        };
+    };
+
+    fragment@3 {
+        target = &lt;&amp;i2s&gt;;
+        __overlay__ {
+            status = <span class="hljs-string">"okay"</span>;
+        };
+    };
+
+    fragment@4 {
+        target = &lt;&amp;sound&gt;;
+        __overlay__ {
+            compatible = <span class="hljs-string">"simple-audio-card"</span>;
+            i2s_controller = &lt;&amp;i2s&gt;;
+            status = <span class="hljs-string">"okay"</span>;
+            simple-audio-card,name = <span class="hljs-string">"pipad"</span>;
+            simple-audio-card,format = <span class="hljs-string">"i2s"</span>;
+
+            simple-audio-card,bitclock-master = &lt;&amp;dailink0_master&gt;;
+            simple-audio-card,frame-master = &lt;&amp;dailink0_master&gt;;
+
+            simple-audio-card,widgets =
+                <span class="hljs-string">"Microphone"</span>, <span class="hljs-string">"Microphone Jack"</span>,
+                <span class="hljs-string">"Microphone"</span>, <span class="hljs-string">"Internal Microphone"</span>,
+                <span class="hljs-string">"Headphone"</span>, <span class="hljs-string">"Headphone Jack"</span>,
+                <span class="hljs-string">"Line"</span>, <span class="hljs-string">"Line Out"</span>,
+                <span class="hljs-string">"Speaker"</span>, <span class="hljs-string">"Internal Speaker"</span>;
+            simple-audio-card,routing =
+                <span class="hljs-string">"Line Out"</span>, <span class="hljs-string">"HPLCOM"</span>,
+                <span class="hljs-string">"Line Out"</span>, <span class="hljs-string">"HPRCOM"</span>,
+                <span class="hljs-string">"Headphone Jack"</span>, <span class="hljs-string">"HPLOUT"</span>,
+                <span class="hljs-string">"Headphone Jack"</span>, <span class="hljs-string">"HPROUT"</span>,
+                <span class="hljs-string">"Microphone Jack"</span>, <span class="hljs-string">"MIC2L"</span>,
+                <span class="hljs-string">"Internal Microphone"</span>, <span class="hljs-string">"MIC1L"</span>,
+                <span class="hljs-string">"Internal Speaker"</span>, <span class="hljs-string">"LLOUT"</span>,
+                <span class="hljs-string">"Internal Speaker"</span>, <span class="hljs-string">"RLOUT"</span>;
+            simple-audio-card,aux-devs = &lt;&amp;&gt;;
+            dailink0_master: simple-audio-card,cpu {
+                sound-dai = &lt;&amp;i2s&gt;;
+            };
+            simple-audio-card,codec {
+                sound-dai = &lt;&amp;tlv320aic3104&gt;;
+                system-clock-frequency = &lt;12288000&gt;;
+            };
+        };
+    };
+};</pre>
+<p>This loads cleanly, and causes the snd_soc_tlv320aic3x, snd_soc_simple_card, and snd_soc_bcm2835_i2s modules to be loaded. This looks like it ought to work, but at the moment:</p>
+<pre>
+pi@raspberrypi:~ $ aplay -l
+aplay: device_list:272: no soundcards found...
+pi@raspberrypi:~ $ ls /dev/snd
+seq  timer</pre>
+<p>If things were working correctly, this ought to look something like:</p>
+<pre>
+pi@raspberrypi:~ $ aplay -l
+**** List of PLAYBACK Hardware Devices ****
+card 0: b1 [bcm2835 HDMI 1], device 0: bcm2835 HDMI 1 [bcm2835 HDMI 1]
+  Subdevices: 4/4
+  Subdevice #0: subdevice #0
+  Subdevice #1: subdevice #1
+  Subdevice #2: subdevice #2
+  Subdevice #3: subdevice #3
+card 1: Headphones [bcm2835 Headphones], device 0: bcm2835 Headphones [bcm2835 Headphones]
+  Subdevices: 4/4
+  Subdevice #0: subdevice #0
+  Subdevice #1: subdevice #1
+  Subdevice #2: subdevice #2
+  Subdevice #3: subdevice #3
+pi@raspberrypi:~ $ ls /dev/snd/
+by-path  controlC0  controlC1  pcmC0D0p  pcmC1D0p  seq  timer</pre>
+<p>(This is what you see if you set dtparam=audio=on in /boot/config.txt). I'm stuck until I figure out why controlC0 / pcmC0D0p are missing.</p>

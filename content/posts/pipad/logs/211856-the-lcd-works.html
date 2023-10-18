@@ -1,0 +1,46 @@
+---
+title: 'Pipad: The LCD works!'
+date: 2022-10-07T07:41:00-07:00
+draft: false
+---
+<p><em>View or comment on this project log on <a href="https://hackaday.io/project/177256/log/211856-the-lcd-works">Hackaday.io</a></em></p>
+
+<p>
+After finding and fixing a few silly mistakes, I finally got the LCD working:
+</p>
+<figure>
+<img src="/img/pipad/8507331665126694461.jpeg"/>
+<figcaption>
+        The iPad's LCD displaying glxgears, backlit by a makeshift backlight — the circuitry for driving the built-in backlight had a mistake that I haven't fixed yet, documented in <a href="https://hackaday.io/project/177256-put-a-raspberry-pi-cm4-into-an-original-ipad/log/207483-cm4-carrier-board-chip-shortage-pain-bodges-silly-mistakes-and-tragedy">this project log</a>.</figcaption>
+</figure>
+<p>
+The issues I discovered that I had to fix were:
+</p>
+<ol>
+<li>The registers for HFP, HBP, and Hsync pulse width are 8 bits on the sn65dsi83, but I was trying to set several of these to values above 255. This was causing them to wrap around, meaning my horizontal line frequency was different than I wanted. I had to adjust these values to be &lt;=255.</li>
+<li>I recalled that <a href="https://forums.raspberrypi.com/viewtopic.php?p=2020479&amp;hilit=4+lanes#p2020337">someone had told me that 4 lanes of DSI doesn't seem to work</a> with the sn65 (at least with the current version of the Linux driver). I had most recently been testing with 4 lanes, so I was getting no LVDS output. Switching to 3 lanes (and adjusting the desired LVDS clock speed downwards so that the DSI clock would be under 500MHz) got the sn65 producing LVDS signals that seemed to work.</li>
+<li>The LVDS connector on the other side of my board had come off. At some point I had tried swapping out the sn65 IC for a fresh one, thinking I might have burned out the LVDS outputs by shorting them to the inconveniently adjacent 1.8V supply pins. During this rework process, the solder on the LVDS connector must have gotten hot enough to melt (it is essentially right behind the sn65).</li>
+</ol>
+<p>
+    I'm fortunate that the LCD doesn't seem to mind if I use a <a href="https://github.com/EvanKrall/raspberrypi-linux/commit/ca54a60ae16fa958aff7e192419708309132e1c5#diff-b0efb865b9590da1c62bb09d5b597a61bcc769888ce286b5c8a9f72d35fc3788R4575">different timing configuration</a> than is specified in its datasheet.
+</p>
+<p>
+    Next steps:
+</p>
+<ul>
+<li>
+        Merge all my various git branches into one branch (the <a href="https://github.com/EvanKrall/raspberrypi-linux/tree/pipad_sn65dsi83_round_two">LCD</a>, the <a href="https://github.com/EvanKrall/raspberrypi-linux/tree/pipad_gt9110">touchscreen controller</a>, the <a href="https://github.com/EvanKrall/raspberrypi-linux/tree/pipad_rtc">RTC</a>, and the <a href="https://github.com/EvanKrall/raspberrypi-linux/tree/pipad_tlv320aic3206">sound card</a>)
+    </li>
+<li>
+        Get PCBs made of the bodge board that I've designed which should let me connect the TPS61177A chip onto my board the right way around.
+    </li>
+<li>
+        Try closing up the case.
+    </li>
+</ul>
+<p>
+    Once I do those things, this should be a functional tablet! Mostly. There's still the whole software thing to deal with. And I need to figure out how to either use the iPad's original wifi/BT chip or connect the CM4's antenna port to one of the iPad's own antennas. Also I'd like to test the NVMe slot. Oh, and I haven't tested the audio codec+speaker amplifier on this revision of the board, I think.
+</p>
+<p>
+    But still! Tangible progress!
+</p>

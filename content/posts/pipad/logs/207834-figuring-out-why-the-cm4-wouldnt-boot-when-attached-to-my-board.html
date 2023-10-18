@@ -1,0 +1,107 @@
+---
+title: "Pipad: Figuring out why the CM4 wouldn't boot when attached to my board"
+date: 2022-06-26T08:27:00-07:00
+draft: false
+---
+<p><em>View or comment on this project log on <a href="https://hackaday.io/project/177256/log/207834-figuring-out-why-the-cm4-wouldnt-boot-when-attached-to-my-board">Hackaday.io</a></em></p>
+
+<p>In my previous log entry, I had fried my CM4 by shorting 5V to 3.3V, so I had to order a replacement, which arrived last week.</p>
+<p>The next thing for me to test is whether I can boot the CM4 on my board, so I installed Raspberry Pi OS and set <code>enable_uart=1</code> in /boot/config.txt. With the CM4 still in the CM4IO, I verified that I could see boot messages and log into the CM4 over serial.</p>
+<p>I bodged some wires onto the UART traces on my board and connected them to my USB-serial adapter. I moved the CM4 off the CM4IO and onto my own board, and booted it, and.... nothing. Zero output from the UART.</p>
+<p>I figured it must be crashing somewhere during the bootloader or early kernel boot settings, so I moved the CM4 back to the CM4IO and:</p>
+<ol><li>added <code>console=ttyS0,115200n8 loglevel=7 earlycon=uart8250,mmio32,0xfe215040</code> to my /boot/cmdline.txt, to get early kernel messages.</li><li>set <code>BOOT_UART=1</code> in <a href="https://www.raspberrypi.com/documentation/computers/compute-module.html#modifying-the-bootloader-configuration">boot.conf</a> to get output from the bootloader.</li></ol>
+<p>Still nothing...</p>
+<p>After a while, I figured out that the TX pin on my 100-pin connector wasn't properly soldered to my board. Of all the pins to have issues, it had to be that pin!</p>
+<p>At this point, it still isn't booting, but I can at least see kernel messages. I would get a warning at some point during boot:</p>
+<pre>
+[    3.178888] ------------[ cut here ]------------
+[    3.183639] Firmware transaction timeout
+[    3.183693] WARNING: CPU: 2 PID: 1 at drivers/firmware/raspberrypi.c:67 rpi_firmware_property_list+0x1dc/0x250
+[    3.197794] Modules linked in:
+[    3.200888] CPU: 2 PID: 1 Comm: swapper/0 Not tainted 5.15.32-v8+ #1538
+[    3.207583] Hardware name: Raspberry Pi Compute Module 4 Rev 1.1 (DT)
+[    3.214098] pstate: 80000005 (Nzcv daif -PAN -UAO -TCO -DIT -SSBS BTYPE=--)
+[    3.221144] pc : rpi_firmware_property_list+0x1dc/0x250
+[    3.226432] lr : rpi_firmware_property_list+0x1dc/0x250
+[    3.231719] sp : ffffffc00960b9b0
+[    3.235068] x29: ffffffc00960b9b0 x28: 0000000000000000 x27: 0000000000000004
+[    3.242300] x26: ffffffc009a5d008 x25: ffffff8002aa8b80 x24: 0000000000001000
+[    3.249530] x23: 0000000000000014 x22: ffffffc008e8a9c8 x21: ffffff80020b7200
+[    3.256758] x20: ffffffc009a5d000 x19: ffffffc009491158 x18: 0000000000000010
+[    3.263986] x17: 0000000000000001 x16: 0000000000000019 x15: 0720072007200720
+[    3.271214] x14: 0720072d072d072d x13: 74756f656d697420 x12: ffffffc0093a6670
+[    3.278442] x11: 0000000000000003 x10: ffffffc00938e630 x9 : ffffffc0080ec768
+[    3.285670] x8 : 0000000000017fe8 x7 : c0000000ffffefff x6 : 0000000000000001
+[    3.292899] x5 : 0000000000057fa8 x4 : 0000000000000000 x3 : 0000000000000001
+[    3.300126] x2 : 0000000000000000 x1 : 529515f3f0203b00 x0 : 0000000000000000
+[    3.307354] Call trace:
+[    3.309824]  rpi_firmware_property_list+0x1dc/0x250
+[    3.314760]  rpi_firmware_property+0x78/0x110
+[    3.319169]  rpi_domain_on+0x6c/0x90
+[    3.322789]  genpd_power_on.part.23+0x188/0x220
+[    3.327375]  __genpd_dev_pm_attach+0x104/0x238
+[    3.331870]  genpd_dev_pm_attach+0x6c/0x88
+[    3.336014]  dev_pm_domain_attach+0x28/0x40
+[    3.340249]  platform_probe+0x58/0xe0
+[    3.343957]  really_probe+0xc0/0x318
+[    3.347573]  __driver_probe_device+0x80/0xe8
+[    3.351892]  driver_probe_device+0x88/0x118
+[    3.356123]  __driver_attach+0x78/0x110
+[    3.360004]  bus_for_each_dev+0x7c/0xd0
+[    3.363890]  driver_attach+0x2c/0x38
+[    3.367505]  bus_add_driver+0x194/0x1f8
+[    3.371385]  driver_register+0x6c/0x128
+[    3.375265]  __platform_driver_register+0x30/0x40
+[    3.380026]  xhci_plat_init+0x38/0x44
+[    3.383737]  do_one_initcall+0x54/0x2a0
+[    3.387619]  kernel_init_freeable+0x250/0x2d8
+[    3.392031]  kernel_init+0x2c/0x130
+[    3.395564]  ret_from_fork+0x10/0x20
+[    3.399186] ---[ end trace b159b7c67bd50e8b ]---</pre>
+<p>Then after a few more messages, it would hang.</p>
+<p>From what I can tell from <a href="https://github.com/raspberrypi/linux/issues/4047">this issue</a> where people saw the same "Firmware transaction timeout" warning, this happens when the code running on the VC4 locks up.</p>
+<h1>Getting more output</h1>
+<p>The internet told me to add <code>initcall_debug</code> to my kernel command line to get more output on startup. This prints a message per kernel subsystem on boot.</p>
+<p>I could tell from this that the <code>Firmware transaction timeout</code> was happening within <code>xhci_plat_init</code>.</p>
+<pre>
+[    7.367700] calling  xhci_plat_init+0x0/0x44 @ 1
+[    8.405222] ------------[ cut here ]------------
+[    8.409920] Firmware transaction timeout, chan 8 data def00000
+...
+[    8.632151] initcall xhci_plat_init+0x0/0x44 returned 0 after 1230233 usecs
+</pre>
+<p>(XHCI has to do with USB, but nothing made sense yet. USB seems to be working -- I am able to use <a href="https://github.com/raspberrypi/usbboot">usbboot</a> to mount the CM4's eMMC storage on another computer.)</p>
+<p>I could also see that the boot was hanging in gpio_led_driver_init, because I saw this message: </p>
+<pre>
+[   17.890149] calling  gpio_led_driver_init+0x0/0x30 @ 1
+</pre>
+<p> with no corresponding line telling us that it had finished, e.g.:</p>
+<pre>
+initcall gpio_led_driver_init+0x0/0x30 returned X after Y usecs</pre>
+<h1>Even more output</h1>
+<p>I spent a bit of time staring at RPi-related kernel code: the rpi_firmware_transaction function (where the timeout is happening) seems to use an "mbox" to communicate with the Pi's firmware. mbox is some generic code in the kernel, but each platform has its own implementation. The CM4's mbox is implemented in bcm2835-mailbox.c.</p>
+<p>I noticed that bcm-2835-mailbox.c has a few dev_dbg() calls, which would print debug messages. To get these to print, you need to use the kernel's <a href="https://www.kernel.org/doc/html/v4.11/admin-guide/dynamic-debug-howto.html">dynamic debug functionality</a>: Per <a href="https://stackoverflow.com/a/63682160">this stackoverflow answer</a>, the kernel needs to be compiled with <code>CONFIG_DYNAMIC_DEBUG=y</code>. Then, you can add something like <code>dyndbg="file bcm2835-mailbox.c +p"</code> to your kernel command line. This will enable all dev_dbg() calls in that file.</p>
+<p>Doing that, I saw this pattern of  Request 0xDED00008 followed by Reply 0xDED00008:</p>
+<pre>
+[    6.626527] [1] bcm2835_mailbox:bcm2835_send_data:90: bcm2835-mbox fe00b880.mailbox: Request 0xDEF00008
+[    6.626537]  bcm2835_mailbox:bcm2835_mbox_irq:77: bcm2835-mbox fe00b880.mailbox: Reply 0xDEF00008</pre>
+<p> This stops around the time of that <code>Firmware transaction timeout</code> message:</p>
+<pre>
+[ 7.372996] [1] bcm2835_mailbox:bcm2835_send_data:90: bcm2835-mbox fe00b880.mailbox: Request 0xDEF00008
+[ 8.405222] ------------[ cut here ]------------
+[ 8.409920] Firmware transaction timeout, chan 8 data def00000</pre>
+<p>From this point on, all <code>Request</code>s have no corresponding <code>Reply</code>.</p>
+<p>This seems to confirm that the firmware was locking up during the <code>xhci_plat_init</code> call (as opposed to locking up prior to that call, and xhci_plat_init is just the first thing to notice)</p>
+<h1>Success!</h1>
+<p>I remembered that there's an entry in config.txt regarding USB behavior:</p>
+<pre>
+...
+[cm4]
+# Enable host mode on the 2711 built-in XHCI USB controller.
+# This line should be removed if the legacy DWC2 controller is required
+# (e.g. for USB device mode) or if USB support is not required.
+otg_mode=1
+
+...</pre>
+<p>After commenting out the <code>otg_mode</code> line, my CM4 actually boots while attached to my board!</p><figure><img src="/img/pipad/5868321656233545374.png"/><figcaption>Logic analyzer showing a login prompt on the serial output</figcaption></figure>
+<p>Next step: figure out why wifi isn't working, so that I can use SSH instead of serial. </p>

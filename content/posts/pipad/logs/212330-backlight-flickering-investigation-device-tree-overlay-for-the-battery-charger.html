@@ -1,0 +1,25 @@
+---
+title: 'Pipad: Backlight flickering investigation + device tree overlay for the battery charger.'
+date: 2022-10-16T07:37:00-07:00
+draft: false
+---
+<p><em>View or comment on this project log on <a href="https://hackaday.io/project/177256/log/212330-backlight-flickering-investigation-device-tree-overlay-for-the-battery-charger">Hackaday.io</a></em></p>
+
+<p>I've been investigating the backlight flickering that I showed in my previous log entry. My main hypothesis was that the long wires between my breakout board and my main PCB were adding too much inductance, causing increased ripple. I had moved an input decoupling capacitor to the breakout board, which helped some but didn't entirely solve the problem. Adding more capacitance on the input side didn't help much more.</p>
+<p>One thing I noticed is that the problem drops entirely when the tablet is connected to the charger. This made me suspect that maybe my battery is the problem.</p>
+<figure><img src="/img/pipad/18371665903282142.png"/></figure>
+<p>Looks like there isn't much difference between the VBAT measured at the battery terminals and VBAT measured on the breakout board (at least at speeds the Saleae can measure; it's possible that the breakout board sees switching transients.)</p>
+<p>But yikes, the battery is dipping ~400mV under load? That seems like a lot. Assuming that's happening while the board is drawing 2 to 4 amps, that's 100 to 200 milliohms of internal resistance on the battery. I dunno what the internal resistance of a LiPo battery is supposed to be, but this feels high. Perhaps my test battery is aged - internal resistance goes up with use + abuse. (I'm using a separate battery for testing; just a random 2000mAh cell I had lying around, because the iPad battery is glued to the back of the case and doesn't have wire leads, just spring terminals.)</p>
+<h1>On the topic of battery health...</h1>
+<p>I've heard one way to keep lithium ion/polymer batteries healthy is to limit the maximum charge voltage to something lower than 4.2V, like 4.0-4.1V. The battery charge IC I'm using (TI's bq25895) supports this functionality, so I've added a <a href="https://github.com/EvanKrall/raspberrypi-linux/blob/37540e4b5057c4387b5c9777508715fc452ec944/arch/arm/boot/dts/overlays/pipad-bq25895-overlay.dts">device tree overlay</a> which sets this parameter. This also lets us read the battery voltage and charging current (but not discharge current?) easily in Linux:</p>
+<pre>
+meatmanek@cm4:/sys/class/power_supply/bq25890-charger$ cat status 
+Charging
+meatmanek@cm4:/sys/class/power_supply/bq25890-charger$ cat voltage_now 
+3924000
+meatmanek@cm4:/sys/class/power_supply/bq25890-charger$ cat current_now 
+-400000
+meatmanek@cm4:/sys/class/power_supply/bq25890-charger$ cat constant_charge_voltage_max 
+4096000
+</pre>
+<p>Hopefully this helps keep the 12-year-old iPad battery in good working condition.</p>

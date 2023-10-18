@@ -1,0 +1,13 @@
+---
+title: 'Pipad: Trying my hand at driver development'
+date: 2022-10-18T07:19:00-07:00
+draft: false
+---
+<p><em>View or comment on this project log on <a href="https://hackaday.io/project/177256/log/212428-trying-my-hand-at-driver-development">Hackaday.io</a></em></p>
+
+<p>One issue which contributes to the backlight flicker is the undervoltage protection (UVLO) feature of the TPS61177A. This is configurable over i2c, but defaults to 3.5V, which is pretty high.</p>
+<p>In order to set this at startup, I decided to <a href="https://github.com/EvanKrall/raspberrypi-linux/commit/4673caf0170e2480245cf031becc20dfc4537df8">try and write a kernel driver for the TPS61177A</a>. I partly followed <a href="https://docs.kernel.org/i2c/writing-clients.html">https://docs.kernel.org/i2c/writing-clients.html</a> and partly cargo-culted some stuff (mostly related to regmap) from the sn65dsi83 driver. (I've poked around in that driver in previous debugging sessions, which helps me understand its structure more than some other random i2c device driver.)</p>
+<p>The driver essentially just sets the 0xa2 register to the value 0x02, which corresponds to a UVLO voltage of 3.0V. (Ideally, they'd have options between 3.0 and 2.55, but alas...)</p>
+<p>After a few hours of struggle, I got this to configure the UVLO voltage over i2c, but I've run into a hardware-level problem with this approach: in order to save GPIO pins, I used the same GPIO for both the sn65dsi83's enable pin and the tps61177a:<br/></p><figure><img src="/img/pipad/7554741666077690782.png"/><figcaption>Screenshot of part of my schematic, showing that the enable pins for the LVDS bridge (sn65dsi83) and backlight driver (tps61177a) are shorted together.</figcaption></figure>
+<p>This means that the drivers for both chips are competing for control over the GPIO pin; this seems to cause the second driver to fail to load. (In this case, the sn65.)</p>
+<p>There's an easy workaround, for now: I can manually tell the tps61177a to save its configuration to EEPROM. Long-term, I'd like to reduce the number of manual steps that someone would have to take in order to get this board working, and that means either a driver like the one I've written, or some userspace solution like a startup script.</p>

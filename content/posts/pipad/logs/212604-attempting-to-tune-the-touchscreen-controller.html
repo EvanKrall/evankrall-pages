@@ -1,0 +1,111 @@
+---
+title: 'Pipad: Attempting to tune the touchscreen controller'
+date: 2022-10-21T11:15:00-07:00
+draft: false
+---
+<p><em>View or comment on this project log on <a href="https://hackaday.io/project/177256/log/212604-attempting-to-tune-the-touchscreen-controller">Hackaday.io</a></em></p>
+
+<p>For reasons documented in a <a href="https://hackaday.io/project/177256-put-a-raspberry-pi-cm4-into-an-original-ipad/log/189710-a-more-reasonable-touchscreen-controller-ic">previous log entry</a>, I am using the GT9110 touchscreen controller from Goodix.
+	(Essentially, this is the only suitable touchscreen controller I could find in a footprint that I could actually use without spending hundreds of dollars per PCB revision.) In a <a href="https://hackaday.io/project/186431-hdp-2022-put-an-rpi-cm4-into-an-original-ipad/log/208847-getting-the-gt9110-touchscreen-controller-working">later log entry</a>, I got the GT9110 and Linux talking to each other.</p>
+<p>Goodix is quite a frustrating company to buy from as a hobbyist.
+	In comparison to some chip manufacturers like TI, who publish loads of documentation about their chips on the internet, Goodix is very stingy with their documentation.
+As far as I can tell, there's no way for hobbyists to get the documentation except hoping to find a leaked datasheet posted online somewhere. When you do find a datasheet, it's not particularly helpful. Some guidance on how to tune your touch panel (rather than just a table of registers with ~5 words about each) would be nice.</p>
+<figure><a href="https://developers.goodix.com/en/bbs/detail/b8fc87dfa5524333b31809904482b980"><img src="/img/pipad/9928241666159317227.png"/></a><figcaption>Goodix being extremely unhelpful to someone trying to design a board with their touchscreen controllers.</figcaption></figure>
+<p>Maybe I'll try reaching out to whatever AliExpress vendor I bought these chips from. I doubt they'll have the documentation, though.</p>
+<h1>Trying to tune the touchscreen controller</h1>
+<p>So I had the touchscreen detecting my touches, but it also detects phantom touches; mostly along a vertical line a quarter of the way in from the right side of the screen. </p>
+<p>To recap how capacitive touchscreens work: The screens contain two layers of transparent traces, typically made of ITO, a transparent conductor.
+	On one layer, you have traces going across the screen horizontally; in the other layer, traces go across the screen vertically.
+(<a href="https://www.chemistryviews.org/details/ezine/10471424/How_Does_a_Touchscreen_Work/">This website</a> has a pretty good graphic explaining this.) The touchscreen controller will send a signal to each "drive" trace (in my case, horizontal) and measure how much of this signal capacitively couples to each "receive" trace (vertical). When you bring your finger near the screen, some of the signal from the drive line will couple to your finger instead of the receive lines, which makes a measurable difference in coupling.</p>
+<p>I have a few hypotheses as to what might be happening:</p>
+<ul>
+<li>That channel might have a bad connection on the board</li>
+<li>The chip itself might have a fault on that channel</li>
+<li>That channel might be receiving EMI from some nearby components, either on the PCB itself or in the touchscreen/LCD panel.
+Potentially this could be crosstalk between the transmit and this receive trace.)</li>
+</ul>
+<p>I got a hold of a programming guide for the GT911 (the little sibling to the GT9110 -- same family, but fewer channels.
+I bet it's the exact same silicon die inside.) This gives me information on the i2c register maps.</p>
+<p>(Aside: Apparently these chips support a mode called "HotKnot" in which two touchscreens can transfer data to each other!?!? What a bonkers feature.)</p>
+<p>These are the registers which seem relevant to tuning sensitivity:</p>
+<table>
+<tbody><tr>
+<th>Address</th>
+<th>Name</th>
+<th>Notes</th>
+</tr>
+<tr>
+<td>0x8053</td>
+<td>Screen_Touch_Level</td>
+<td>This seems to be the signal level threshold above which a touch begins to be reported. Higher numbers = less sensitive.</td>
+</tr>
+<tr>
+<td>0x8054</td>
+<td>Screen_Leave_Level</td>
+<td>This seems to be the signal level threshold below which a touch stops being reported. Higher numbers = less sensitive.</td>
+</tr>
+<tr>
+<td>0x806b</td>
+<td>Pannel_Tx_Gain</td>
+<td>The lowest 3 bits set the DAC gain, where 0 produces the largest signal and 7 producest the smallest signal.</td>
+</tr>
+<tr>
+<td>0x806b</td>
+<td>Pannel_Rx_Gain</td>
+<td>The lowest 3 bits set the ADC gain. It seems like 7 is the most sensitive and 0 is the least sensitive.</td>
+</tr>
+<tr>
+<td>0x806d</td>
+<td>Pannel_Dump_Shift</td>
+<td>Setting the lowest 3 bits to N &gt; 0 will cause the touch signals to be shifted by N bits left. This would be useful if I wanted even more receive gain than Pannel_Rx_Gain can give, but I want <em>less</em>.</td>
+</tr>
+</tbody></table>
+<p>
+	I'd like to be able to overwhelm any noise by cranking the Tx power up and decreasing the RX sensitivity.
+	Unfortunately, the configuration I had started with was already using 0 for the ADC and DAC gain, so it was already producing the strongest signal with the least Rx amplification.
+</p>
+<h2>Other registers</h2>
+<p>
+	I have played with some other registers:
+</p>
+<table>
+<tbody><tr>
+<th>Address</th>
+<th>Name</th>
+<th>Notes</th>
+</tr>
+<tr>
+<td>0x8062</td>
+<td>Drv_GroupA_Num</td>
+<td rowspan="2">The 5 lowest bits on these two set the number of channels used on each transmitter group. There are 42 total transmit channels available, of which I'm using 40. By setting these so they total 40 instead of 42, my panel became a bit better-behaved and also got rid of a gap at one end of the screen. Drv_GroupA_Num has a flag "All_Driving", and Drv_GroupB_Num has a flag D_Freq; I'm not sure what either of these do.</td>
+</tr>
+<tr>
+<td>0x8063</td>
+<td>Drv_GroupB_Num</td>
+</tr>
+<tr>
+<td>0x8067</td>
+<td>Pannel_BitFreq_L</td>
+<td rowspan="2">These configure the fundamental frequency of the clock driving GroupA and GroupB.</td>
+</tr>
+<tr>
+<td>0x8068</td>
+<td>Pannel_BitFreq_H</td>
+</tr>
+<tr>
+<td>0x8065</td>
+<td>FreqA_factor</td>
+<td rowspan="2">These act as multiplication factors on the fundamental frequency.</td>
+</tr>
+<tr>
+<td>0x8066</td>
+<td>FreqB_factor</td>
+</tr>
+</tbody></table>
+<p>
+	When I tried out different driving frequencies, I either saw no improvement or a drastic deterioration of touchscreen function.
+</p>
+<p>
+	As for a faulty channel or bad connection on the board: I've already tried re-reflowing the flat flex connector, which had no effect.
+	Perhaps I should take a look at the GT9110 chip itself under the microscope and make sure all the pins are well-soldered. (If there's a running theme with this project, it's that I keep discovering pins which aren't connected properly.)
+</p>

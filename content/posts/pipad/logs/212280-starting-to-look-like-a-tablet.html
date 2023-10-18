@@ -1,0 +1,18 @@
+---
+title: 'Pipad: Starting to look like a tablet'
+date: 2022-10-15T07:10:00-07:00
+draft: false
+---
+<p><em>View or comment on this project log on <a href="https://hackaday.io/project/177256/log/212280-starting-to-look-like-a-tablet">Hackaday.io</a></em></p>
+
+<p>I soldered my backlight controller IC onto a QFN breakout board and bodged some connections over to my PCB, so that I could view my LCD without having to provide an external backlight.</p>
+<figure><img src="/img/pipad/9285901665816322268.jpg"/><figcaption>The mess of wires here is mostly bodge connections from that QFN breakout to traces on the PCB -- battery power, i2c, PWM and enable pins, and the anode + cathode pins for the LCD backlight.</figcaption></figure>
+<p>This works, but has some issues: the backlight flickers a lot when the Pi is under load (or using wifi or something?) I think the backlight controller is hitting its under-voltage lockout. At first, I had left the large decoupling cap on the main PCB, but in this configuration the backlight would strobe for about a second on boot, then would shut off. Moving the capacitor to the breakout board helped, but the flicker remains. I may add more capacitance.</p>
+<p>I also think one of the LED strings isn't connected correctly, causing the "stagelight" appearance at the top of the screen.</p>
+<p>(The backlight in the iPad, like many other LCDs, is 6 strings of LEDs:</p>
+<figure><a href="https://www.ti.com/lit/ds/symlink/tps61177a.pdf"><img src="/img/pipad/2661361665817347280.png"/></a><figcaption>Example schematic from the datasheet for the TPS61177A, the backlight controller I'm using.</figcaption></figure>
+<p>This keeps the voltage at something reasonable -- about 20V in the iPad -- and also means that a single LED failure doesn't cause the whole backlight to go out.)</p>
+<h1>The video</h1>
+<div class="video-container"><iframe allowfullscreen="" frameborder="0" src="//www.youtube.com/embed/_AVVeEetGRM" style="width: 500px; height: 281px;"></iframe></div>
+<p>The touchscreen doesn't work quite right - it's detecting phantom touches. I've decreased the sensitivity, which helps slightly, but also makes it miss some real touches. This makes it pretty frustrating to use. (In the video, you can see me struggle to shut down the Pi using the shutdown menu while the touchscreen keeps trying to read MagPi.) The GT9110 chip I'm using has terrible publicly-available documentation, so tuning its configuration will be lots of trial and error.</p>
+<p>Even with all these problems, it's really beginning to feel like a tablet.</p>

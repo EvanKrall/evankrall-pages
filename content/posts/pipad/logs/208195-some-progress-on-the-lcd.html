@@ -1,0 +1,192 @@
+---
+title: 'Pipad: Some progress on the LCD'
+date: 2022-07-04T06:24:00-07:00
+draft: false
+---
+<p><em>View or comment on this project log on <a href="https://hackaday.io/project/177256/log/208195-some-progress-on-the-lcd">Hackaday.io</a></em></p>
+
+<p>The iPad's LCD wants its video input data in the LVDS format, but the CM4 can't output LVDS. It can, however, output DSI video, and there are chips like the <a href="https://www.ti.com/product/SN65DSI83-Q1">sn65dsi83-q1 from TI</a> which can convert from DSI to LVDS.</p>
+<p>About a year ago, I had <a href="https://hackaday.io/project/177256-put-a-raspberry-pi-cm4-into-an-original-ipad/log/196964-colors-sn65dsi83-test-pattern">gotten the sn65dsi83 somewhat working</a> on the previous revision of my board. However, I ran into an issue with that board design that was difficult to work around: That board was designed to work as a hat for a full-size Pi (for ease of controlling which parts of the board were connected), so it only supported the 2 lanes of DSI that are exposed on the 15-pin display FFC on the Pi 4. This made it impossible to get clock speeds in the right ranges to make everything happy:</p>
+<p>The LCD panel from the iPad wants an LVDS clock between 97MHz and 103MHz. The sn65dsi83 driver calculates a DSI clock speed for for a desired LVDS clock frequency based on the pixel rates required and how many lanes of DSI you're using. (In this case, it wanted a 600MHz clock, which the sn65 would then divide by 6 to get 100MHz.) The Pi's DSI driver, vc4_dsi, then rounds this requested DSI clock speed <em></em>up to the nearest integer division of 1.5GHz. In the case of 2 DSI lanes, this meant the Pi was trying to send a 750MHz DSI clock, and divide by 6 to get a 125MHz LVDS clock. These clock speeds are out of spec for both the sn65 (which only supports up to 500MHz DSI clocks) and the panel (which wants 100MHz clocks).</p>
+<p>The fix would be to use 4 lanes of DSI -- with 4 lanes, the sn65dsi83 driver would request a 300MHz clock (which the vc4_dsi driver would happily provide, as that's one fifth of 1500 MHz), which the sn65 would then divide by 3 to get the 100MHz LVDS clock. I set aside any further work on the sn65 until I had my second board revision.</p>
+<h1>Picking up where I left off</h1>
+<p>Now that I've got my CM4-based board (which has all 4 lanes of DSI routed), it was time to try getting video working again.</p>
+<p>One of the first things I did was to skim through the updates on this <a href="https://forums.raspberrypi.com/viewtopic.php?p=2021380">massive thread on the Raspberry Pi forums</a>, which is the de facto place to discuss using the sn65dsi83 with the Raspberry Pi. So, so many updates.</p>
+<p>An engineer from the Raspberry Pi foundation, who goes by 6by9 on the forums, maintains a branch of the Linux kernel with patches to the sn65dsi83 driver. I pulled the latest version of their branch and merged it with the changes from my branch from last year. I double-checked the settings in the device tree overlay file (updating e.g. which GPIO pins are connected to the enable pin on the sn65 and its voltage regulator).</p>
+<p>Before trying it out, I looked at the area of my board near the sn65 to check for short circuits and such. (This is my last copy of the chip, and they're only available from a few places, which are selling at quite a bit above MSRP.)</p>
+<p>Satisfied that I wasn't going to fry the chip, I enabled the dtoverlay. I was greeted with this error message on boot:</p>
+<pre>
+[   18.154108] sn65dsi83 10-002d: failed to attach dsi to host: -517</pre>
+<p>I used some tricks I've learned during this project to get more information out of the kernel at boot: specifically, adding a bunch of dyndbg flags to the kernel command line in /boot/cmdline.txt:<br/></p>
+<pre>
+ti_sn65dsi83.dyndbg="+pmf" vc4.dyndbg="+pmf" panel_simple.dyndbg="+pmf" drm_kms_helper.dyndbg="+pmf" component.dyndbg="+pmf" </pre>
+<p>(This enables debug messages in the ti_sn65dsi83, vc4, panel_simple, ... kernel modules.)</p>
+<p>After adding some more debug messages to those modules, I ended up with this in my boot log:</p>
+<pre>
+[   17.888125] calling  sn65dsi83_driver_init+0x0/0x1000 [ti_sn65dsi83] @ 366
+[   17.900948] sn65dsi83 10-002d: supply vcc not found, using dummy regulator
+[   17.902829] systemd-journald[136]: Successfully sent stream file descriptor to service manager.
+[   17.907747] systemd-journald[136]: Successfully sent stream file descriptor to service manager.
+[   17.918315] systemd-journald[136]: Successfully sent stream file descriptor to service manager.
+[   17.942603] systemd-journald[136]: Successfully sent stream file descriptor to service manager.
+[   17.948459] vc4_dsi fe700000.dsi: vc4_dsi_host_attach called
+[   17.948499] component:__component_add: vc4_dsi fe700000.dsi: adding component (ops vc4_dsi_ops [vc4])
+[   17.948595] component:try_to_bring_up_master: vc4-drm gpu: trying to bring up master
+[   17.948612] component:find_components: vc4-drm gpu: Looking for component 0
+[   17.948629] component:find_components: vc4-drm gpu: Looking for component 1
+[   17.948645] component:find_components: vc4-drm gpu: Looking for component 2
+[   17.948661] component:find_components: vc4-drm gpu: Looking for component 3
+[   17.948889] component:find_components: vc4-drm gpu: found component fe700000.dsi, duplicate 0
+[   17.948916] component:find_components: vc4-drm gpu: Looking for component 4
+[   17.948932] component:find_components: vc4-drm gpu: found component fe004000.txp, duplicate 0
+[   17.948948] component:find_components: vc4-drm gpu: Looking for component 5
+[   17.948963] component:find_components: vc4-drm gpu: found component fe206000.pixelvalve, duplicate 0
+[   17.948978] component:find_components: vc4-drm gpu: Looking for component 6
+[   17.948993] component:find_components: vc4-drm gpu: found component fe207000.pixelvalve, duplicate 0
+[   17.949008] component:find_components: vc4-drm gpu: Looking for component 7
+[   17.949022] component:find_components: vc4-drm gpu: found component fe20a000.pixelvalve, duplicate 0
+[   17.949038] component:find_components: vc4-drm gpu: Looking for component 8
+[   17.949052] component:find_components: vc4-drm gpu: found component fe216000.pixelvalve, duplicate 0
+[   17.949067] component:find_components: vc4-drm gpu: Looking for component 9
+[   17.949082] component:find_components: vc4-drm gpu: found component fec12000.pixelvalve, duplicate 0
+[   17.949106] component:try_to_bring_up_master: vc4-drm gpu: calling master-&gt;ops-&gt;bind (ops vc4_drm_ops [vc4])
+[   17.953768] component:component_bind: vc4-drm gpu: binding fe400000.hvs (ops vc4_hvs_ops [vc4])
+[   17.954158] vc4-drm gpu: bound fe400000.hvs (ops vc4_hvs_ops [vc4])
+[   17.954247] component:component_bind: vc4-drm gpu: binding fef00700.hdmi (ops vc4_hdmi_ops [vc4])
+[   17.993251] Registered IR keymap rc-cec
+[   17.994710] rc rc0: vc4 as /devices/platform/soc/fef00700.hdmi/rc/rc0
+[   18.014550] calling  llc_init+0x0/0x1000 [llc] @ 396
+[   18.014615] initcall llc_init+0x0/0x1000 [llc] returned 0 after 3 usecs
+[   18.056791] input: vc4 as /devices/platform/soc/fef00700.hdmi/rc/rc0/input1
+[   18.076250] uart-pl011 fe201000.serial: no DMA platform data
+[   18.081757] calling  vlan_proto_init+0x0/0xc4 [8021q] @ 396
+[   18.081844] 8021q: 802.1Q VLAN Support v1.8
+[   18.081935] initcall vlan_proto_init+0x0/0xc4 [8021q] returned 0 after 90 usecs
+[   18.095931] calling  hdmi_codec_driver_init+0x0/0x1000 [snd_soc_hdmi_codec] @ 167
+[   18.096558] initcall hdmi_codec_driver_init+0x0/0x1000 [snd_soc_hdmi_codec] returned 0 after 550 usecs
+[   18.122330] systemd-journald[136]: Successfully sent stream file descriptor to service manager.
+[   18.125745] systemd-journald[136]: Successfully sent stream file descriptor to service manager.
+[   18.128567] systemd-journald[136]: Successfully sent stream file descriptor to service manager.
+[   18.134728] systemd-journald[136]: Successfully sent stream file descriptor to service manager.
+[   18.154051] vc4_dsi fe700000.dsi: vc4_dsi_host_attach got error from component_add
+[   18.154088] sn65dsi83 10-002d: devm_mipi_dsi_attach got error from mipi_dsi_attach: -517
+[   18.154108] sn65dsi83 10-002d: failed to attach dsi to host: -517
+[   18.154812] initcall sn65dsi83_driver_init+0x0/0x1000 [ti_sn65dsi83] returned 0 after 57438 usecs
+</pre>
+<p>I notice that the -517 error is happening just after the HDMI audio is initialiing, and recall <a href="https://forums.raspberrypi.com/viewtopic.php?p=1958662#p1958662">this message</a>. Double-checking that 517 = EPROBE_DEFER, I apply the workaround from that message. This seems to help -- the driver successfully loads:</p>
+<pre>
+[   18.242587] calling  sn65dsi83_driver_init+0x0/0x1000 [ti_sn65dsi83] @ 426
+[   18.247840] rtc-pcf85063 1-0051: registered as rtc0
+[   18.248975] rtc-pcf85063 1-0051: setting system clock to 2022-07-05T06:55:21 UTC (1657004121)
+[   18.251207] initcall pcf85063_driver_init+0x0/0x1000 [rtc_pcf85063] returned 0 after 8361 usecs
+[   18.257846] sn65dsi83 10-002d: supply vcc not found, using dummy regulator
+[   18.271404] vc4_dsi fe700000.dsi: vc4_dsi_host_attach called
+[   18.271443] component:__component_add: vc4_dsi fe700000.dsi: adding component (ops vc4_dsi_ops [vc4])
+[   18.271537] component:try_to_bring_up_master: vc4-drm gpu: trying to bring up master
+[   18.271553] component:find_components: vc4-drm gpu: Looking for component 0
+[   18.271571] component:find_components: vc4-drm gpu: Looking for component 1
+[   18.271587] component:find_components: vc4-drm gpu: Looking for component 2
+[   18.271601] component:find_components: vc4-drm gpu: Looking for component 3
+[   18.271618] component:find_components: vc4-drm gpu: found component fe700000.dsi, duplicate 0
+[   18.271635] component:find_components: vc4-drm gpu: Looking for component 4
+[   18.271650] component:find_components: vc4-drm gpu: found component fe004000.txp, duplicate 0
+[   18.271665] component:find_components: vc4-drm gpu: Looking for component 5
+[   18.271680] component:find_components: vc4-drm gpu: found component fe206000.pixelvalve, duplicate 0
+[   18.271696] component:find_components: vc4-drm gpu: Looking for component 6
+[   18.271711] component:find_components: vc4-drm gpu: found component fe207000.pixelvalve, duplicate 0
+[   18.271726] component:find_components: vc4-drm gpu: Looking for component 7
+[   18.271740] component:find_components: vc4-drm gpu: found component fe20a000.pixelvalve, duplicate 0
+[   18.271756] component:find_components: vc4-drm gpu: Looking for component 8
+[   18.271771] component:find_components: vc4-drm gpu: found component fe216000.pixelvalve, duplicate 0
+[   18.271786] component:find_components: vc4-drm gpu: Looking for component 9
+[   18.271801] component:find_components: vc4-drm gpu: found component fec12000.pixelvalve, duplicate 0
+[   18.271820] component:try_to_bring_up_master: vc4-drm gpu: calling master-&gt;ops-&gt;bind (ops vc4_drm_ops [vc4])
+[   18.273963] component:component_bind: vc4-drm gpu: binding fe400000.hvs (ops vc4_hvs_ops [vc4])
+[   18.274341] vc4-drm gpu: bound fe400000.hvs (ops vc4_hvs_ops [vc4])
+[   18.274429] component:component_bind: vc4-drm gpu: binding fef00700.hdmi (ops vc4_hdmi_ops [vc4])
+[   18.279785] Registered IR keymap rc-cec
+[   18.280394] rc rc0: vc4 as /devices/platform/soc/fef00700.hdmi/rc/rc0
+[   18.281000] input: vc4 as /devices/platform/soc/fef00700.hdmi/rc/rc0/input1
+[   18.282706] vc4_hdmi fef00700.hdmi: 'dmas' DT property is missing or empty, no HDMI audio
+[   18.282773] vc4-drm gpu: bound fef00700.hdmi (ops vc4_hdmi_ops [vc4])
+[   18.282933] component:component_bind: vc4-drm gpu: binding fef05700.hdmi (ops vc4_hdmi_ops [vc4])
+[   18.300472] Registered IR keymap rc-cec
+[   18.301060] rc rc1: vc4 as /devices/platform/soc/fef05700.hdmi/rc/rc1
+[   18.301764] input: vc4 as /devices/platform/soc/fef05700.hdmi/rc/rc1/input2
+[   18.306737] vc4_hdmi fef05700.hdmi: 'dmas' DT property is missing or empty, no HDMI audio
+[   18.306924] vc4-drm gpu: bound fef05700.hdmi (ops vc4_hdmi_ops [vc4])
+[   18.307033] component:component_bind: vc4-drm gpu: binding fe700000.dsi (ops vc4_dsi_ops [vc4])
+[   18.308798] vc4-drm gpu: bound fe700000.dsi (ops vc4_dsi_ops [vc4])
+[   18.308905] component:component_bind: vc4-drm gpu: binding fe004000.txp (ops vc4_txp_ops [vc4])
+[   18.309281] vc4-drm gpu: bound fe004000.txp (ops vc4_txp_ops [vc4])
+[   18.309366] component:component_bind: vc4-drm gpu: binding fe206000.pixelvalve (ops vc4_crtc_ops [vc4])
+[   18.309691] vc4-drm gpu: bound fe206000.pixelvalve (ops vc4_crtc_ops [vc4])
+[   18.309774] component:component_bind: vc4-drm gpu: binding fe207000.pixelvalve (ops vc4_crtc_ops [vc4])
+[   18.310074] vc4-drm gpu: bound fe207000.pixelvalve (ops vc4_crtc_ops [vc4])
+[   18.310157] component:component_bind: vc4-drm gpu: binding fe20a000.pixelvalve (ops vc4_crtc_ops [vc4])
+[   18.310449] vc4-drm gpu: bound fe20a000.pixelvalve (ops vc4_crtc_ops [vc4])
+[   18.310528] component:component_bind: vc4-drm gpu: binding fe216000.pixelvalve (ops vc4_crtc_ops [vc4])
+[   18.310772] vc4-drm gpu: bound fe216000.pixelvalve (ops vc4_crtc_ops [vc4])
+[   18.312594] component:component_bind: vc4-drm gpu: binding fec12000.pixelvalve (ops vc4_crtc_ops [vc4])
+[   18.312989] vc4-drm gpu: bound fec12000.pixelvalve (ops vc4_crtc_ops [vc4])
+[   18.330091] [drm] Initialized vc4 0.0.0 20140616 for gpu on minor 1
+[   18.340221] brcmfmac: brcmf_cfg80211_set_power_mgmt: power save enabled
+[   18.497222] sn65dsi83 10-002d: failed to lock PLL, ret=-110
+[   18.516260] Console: switching to colour frame buffer device 128x48
+[   18.537765] vc4-drm gpu: [drm] fb0: vc4drmfb frame buffer device
+[   18.573145] initcall sn65dsi83_driver_init+0x0/0x1000 [ti_sn65dsi83] returned 0 after 322753 usecs</pre>
+<p>That line "[   18.516260] Console: switching to colour frame buffer device 128x48" is encouraging! Ok, how do I test this now?</p>
+<p>Searching around, I found <a href="https://github.com/richinfante/fbutils">https://github.com/richinfante/fbutils</a>, which is a collection of tools for displaying images from the Linux framebuffer. (Graphics without X11 or Wayland!) Unfortunately, nothing seemed to be working - the LCD screen is just black.</p>
+<p>Giving up on the framebuffer for a bit, I then installed the Raspberry Pi desktop with sudo apt install raspberrypi-ui-mods</p>
+<p>This doesn't seem to help, either -- the LCD is still just black. Then I realize I forgot to plug in the LVDS cable 🤦<span></span></p>
+<p>I plug in the LVDS cable, and.... still nothing!</p>
+<p>Reading over my kernel boot logs again, I notice an error message from the sn65dsi83 driver:</p>
+<pre>
+[   18.497222] sn65dsi83 10-002d: failed to lock PLL, ret=-110</pre>
+<h2>Am I on the right branch?</h2>
+<p>I remembered that 6by9 actually had three branches relating to the sn65: rpi-5.15.y-dsi, rpi-5.15.y-sn65dsi8x, and rpi-5.15.y-sn65dsi83. The commits on the -sn65dsi8x branch were the most recent, so I had gone with that at first, but figured I should try the other two branches as well.</p>
+<p>The -dsi branch was unable to start X -- it would give me this error:</p>
+<pre>
+Fatal server error:
+(EE) no screens found(EE)</pre>
+<p>Looking at the boot logs, I noticed this problem:</p>
+<pre>
+[   17.307990] component:try_to_bring_up_master: vc4-drm gpu: master has incomplete components</pre>
+<p>Moving on to the third branch (rpi-5.15.y-sn65dsi83) is much more successful, and xrandr shows the right resolution:</p>
+<pre>
+meatmanek@cm4:~ $ DISPLAY=:0 xrandr
+Screen 0: minimum 320 x 200, current 1024 x 768, maximum 7680 x 7680
+HDMI-1 disconnected primary (normal left inverted right x axis y axis)
+HDMI-2 disconnected (normal left inverted right x axis y axis)
+LVDS-1 connected 1024x768+0+0 (normal left inverted right x axis y axis) 0mm x 0mm   1024x768      59.98*+
+meatmanek@cm4:~ $ sudo i2cget -f -y 10 0x2d 0xe1
+0x00</pre>
+<p>But why is my screen still black?</p>
+<p>Probing one of the DSI signal lines while running xeyes, I could see that there's definitely video signal coming through.</p>
+<figure><img src="/img/pipad/4409021658465815171.png"/><figcaption>What I was hoping to see on the screen -- screenshot captured while running the xeyes command.</figcaption></figure>
+<div class="video-container"><iframe allowfullscreen="" frameborder="0" src="//www.youtube.com/embed/1QXPpRTYdVw" style="width: 500px; height: 281px;"></iframe></div>
+<p>The oscilloscope in this video has its trigger hold-off configured so that each trace the oscilloscope displays is slightly later into the next frame of video, so the effect is that we slowly scan down the image. If you watch carefully, you can notice the eyes' pupils in the signal on the oscilloscope.</p>
+<p>And yet, still, no image was showing up on the LCD.</p>
+<p>I started reading through the configuration registers on the sn65 to see if anything stood out that could explain why nothing was showing up. Suddenly, the sn65 stopped responding entirely on i2c.</p>
+<h1>A detour while we fix some basic stuff</h1>
+<p>Breaking out the trusty logic analyzer, I discovered that the enable pin was being weird - it's just hovering at 1.5V with some weird noise on it, instead of being at the 1.8V that the NTB0102 logic level converter is supposed to drive it to. Also, the 3.3V side is being weird, too -- it's supposed to be 0V or 3.3V, not have weird voltage shifts.</p>
+<figure><img src="/img/pipad/6264991657496405467.png" style="display: block; cursor: pointer; vertical-align: middle; "/></figure>
+<p>I wonder if the NTB0102 is improperly soldered or something. After giving it a bit more solder and wicking away the excess, things look better:</p>
+<figure><img src="/img/pipad/3216751657499032293.png"/></figure>
+<p>Once I have this fixed, I learn from the sn65's error register that it's not able to lock its PLL to the DSI clock signal. Looking at the DSI clock with my oscilloscope, I see no clock, just a DC offset and a bit of noise.</p>
+<p>It took me way longer than I'd like to admit to realize that this was caused by even more bad soldering:</p>
+<figure><img src="/img/pipad/1012871658467266886.jpg"/><figcaption>The DF40HC connector for the CM4, showing 5 of 8 DSI pins without any solder, including the two clock pins. (There are another 2 pins for DSI that aren't pictured here.)</figcaption></figure>
+<p>With the number of pins disconnected here, it's actually lucky (or unlucky?) that the DSI data lane I chose to probe at first happened to have signal.</p>
+<figure><img src="/img/pipad/8883271658467747292.jpg"/><figcaption>Better, but not perfect. I subsequently touched up that pin that has less solder than the others. (And cleaned up the flux.)</figcaption></figure>
+<h1>Stuck with no LVDS signal</h1>
+<p>After fixing the soldering, I'm currently stuck with the following situation:</p>
+<ul><li>The Raspberry Pi seems to be outputting DSI correctly, and I can see signal arriving at all DSI pins of the sn65</li><li>The sn65 doesn't complain about any errors in its error register, including any clock errors.</li><li>The sn65 doesn't output any LVDS signal unless I enable its test pattern.</li></ul><p>You had one job, sn65dsi83! Convert my DSI to LVDS!</p>
+<figure><img src="/img/pipad/7355141658468282822.jpeg"/><figcaption>LVDS data coming from the sn65dsi83 while the test pattern is enabled</figcaption></figure>
+<figure><img src="/img/pipad/8426271658468351220.jpeg"/><figcaption>Meaningless LVDS data coming from the sn65dsi83 while it should be outputting the data it receives from DSI.</figcaption></figure>
+<p>My current <a href="https://forums.raspberrypi.com/viewtopic.php?p=2021379#p2021379">best hypothesis</a> is that my problem has to do with the DSI data not having a horizontal blanking interval that is as long as the LVDS data's blanking interval should be: it seems like the Pi is producing a new horizontal line every 13.16 microseconds, while the LVDS signal should produce a new line every 20.84 microseconds.</p>
+<h1>My "backlight"</h1>
+<p>I should note that because of the backlight controller issues documented in a <a href="https://hackaday.io/project/177256-put-a-raspberry-pi-cm4-into-an-original-ipad/log/207483-cm4-carrier-board-chip-shortage-pain-bodges-silly-mistakes-and-tragedy">previous log entry</a>, my board can't currently drive the backlight built in to the LCD. (I tried hand-soldering the backlight controller chip upside-down but it still doesn't work. I'm planning to make a little bodge PCB that I can solder down, which has pads on the bottom that would connect to my board as well as pads on the top that would connect to the TPS61177 in the right orientation.)</p>
+<p>But it turns out, the white reflector used for the backlight isn't 100% opaque, so if you shine enough light in the back, you can see it through the LCD, at least directly underneath where you shine it.</p>
+<figure><img src="/img/pipad/7792191658469601521.jpeg"/><figcaption>20 watts of LEDs, standing in for the backlight.</figcaption></figure>
+<figure><img src="/img/pipad/1649271658469872915.jpeg"/><figcaption>The sn65dsi83's test pattern, illuminated by my hacky backlight replacement.</figcaption></figure>
+<p>At this point I've been trying to get video working for about 3 weeks, so I figured I should publish a log entry for what I've been up to, even if it hasn't been successful. Hopefully I'll have a better update soon!</p>

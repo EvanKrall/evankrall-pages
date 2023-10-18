@@ -1,0 +1,36 @@
+---
+title: "Pipad: Real-time clock: It's nice when something is easy."
+date: 2022-06-29T07:18:00-07:00
+draft: false
+---
+<p><em>View or comment on this project log on <a href="https://hackaday.io/project/177256/log/207999-real-time-clock-its-nice-when-something-is-easy">Hackaday.io</a></em></p>
+
+<p>At the very last minute before ordering my PCBs, I realized I probably wanted a real-time clock on the board somewhere. I searched on Digi-Key, found the RV-8263-C7, which was:</p>
+<ul><li>in stock (not anymore, lol)</li><li>cheap</li><li>tiny</li><li>requires minimal external components (just a decoupling cap and a pull-up resistor on an output enable pin)</li><li>has a Linux kernel driver (this chip has the same protocol as the PCF85063)</li></ul>
+<p>I found an empty spot on my board with I2C and VBAT lines nearby, and laid it out in a few minutes.</p>
+<p>Tonight, I decided to see if it was working:</p><p>Throw together a quick dtoverlay file:</p>
+<pre class="hljs cpp">/dts-v1/;
+/plugin/;
+
+/ {
+    compatible = <span class="hljs-string">"brcm,bcm2835"</span>;
+
+    fragment@<span class="hljs-number">0</span> {
+        target = &lt;&amp;i2c1&gt;;
+        __overlay__ {
+            <span class="hljs-meta">#address-cells = <span class="hljs-meta-string">&lt;1&gt;;</span></span>
+            <span class="hljs-meta">#size-cells = <span class="hljs-meta-string">&lt;0&gt;;</span></span>
+            status = <span class="hljs-string">"okay"</span>;
+
+
+            rv8263: rtc@<span class="hljs-number">51</span> {
+                compatible = <span class="hljs-string">"microcrystal,rv8263"</span>;
+                reg = &lt;<span class="hljs-number">0x51</span>&gt;;
+                <span class="hljs-comment">// quartz-load-femtofarads = &lt;12500&gt;;</span>
+            };
+        };
+    };
+};</pre>
+<p>(This is basically just device tree overlay boilerplate plus the <a href="https://github.com/torvalds/linux/blob/v5.15/Documentation/devicetree/bindings/rtc/nxp,pcf85063.txt#L18-L22">example from the documentation</a>.)</p><p>Compile with <code>make -j4 ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- dtbs</code>, copy the output <code>dtbo</code> file to the CM4's /boot/overlays directory, and run <code>dtoverlay pipad-rtc.dtbo</code> to load the overlay. Test with <code>sudo hwclock --systohc</code> then <code>sudo hwclock --get</code>. Add <code>dtoverlay=pipad-rtc</code> to /boot/config.txt, reboot, check <code>sudo hwclock --get</code> again, and it's still working.</p>
+<p>Remove the <code>fake-hwclock</code> package and disable the systemd unit with the instructions on <a href="https://pimylifeup.com/raspberry-pi-rtc/">https://pimylifeup.com/raspberry-pi-rtc/</a>, and double-check that it's actually reading the hardware clock on startup (and not just using NTP) by using <code>rfkill block wifi</code> to turn off wifi, reboot, and check that the time is accurate.</p>
+<p>No <a href="https://hackaday.io/project/177256-put-a-raspberry-pi-cm4-into-an-original-ipad/log/207483-cm4-carrier-board-chip-shortage-pain-bodges-silly-mistakes-and-tragedy">incorrect PCB footprints or unwired pins</a>, no <a href="https://hackaday.io/project/177256-put-a-raspberry-pi-cm4-into-an-original-ipad/log/196672-using-ftrace-to-debug-device-tree-problems">Linux kernel debugging</a>. Just things working correctly on the first try. Feels good.</p>

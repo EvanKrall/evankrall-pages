@@ -1,0 +1,31 @@
+---
+title: 'Pipad: Debugging the power button'
+date: 2023-01-23T00:27:00-08:00
+draft: false
+---
+<p><em>View or comment on this project log on <a href="https://hackaday.io/project/177256/log/215439-debugging-the-power-button">Hackaday.io</a></em></p>
+
+<p>Hey, I'm back with a simple one today. Between the holidays and general life stuff, I haven't found time to work on this project for a while. Motivation on hobby projects seems to ebb and flow. Hopefully it's starting to flow again.</p>
+<p>I saw a post on the Facebook group "Raspberry Pi and DIY Projects" where someone was using the MAX16150 IC to handle power on/off for their Pi, and it inspired me to try and get my MAX16150-based circuit working.</p>
+<figure><a href="https://www.analog.com/media/en/technical-documentation/data-sheets/max16150.pdf" target="_blank"><img src="/img/pipad/2418001674434180975.png"/></a><figcaption>One of the typical application circuits from page 16 of the MAX16150 datasheet, showing it controlling the enable pin on a power supply for a power-hungry device.</figcaption></figure>
+<p>The MAX16150 monitors a push button on its <span>PB_IN</span> pin. A short press of the button will either turn on the OUT pin, or if it's already on, send a brief low pulse on the <span>INT</span> pin. The MCU (the CM4 in my case) can detect this pulse and handle it gracefully, by e.g. starting a soft shutdown.</p>
+<p>If you press the power button for 8 seconds, the MAX16150 will deassert the OUT pin (pull it low), cutting power to the downstream device. This is consistent with the power button behavior of most computers, tablets, and phones.</p>
+<p>If the <span>CLR</span> pin goes low, the MAX16150 will deassert the OUT pin. This is used to give the MCU a way to shut off its own power, and also provides some power watchdog functionality -- if the power goes low for some reason, like a short circuit or a dead battery, the MAX16150 will shut off the power.</p>
+<p>I more or less followed the typical application circuit above in my own design:</p>
+<figure><img src="/img/pipad/6666431674434765417.png"/></figure>
+<p>On my current revision of the PCB, the <span>PWR_BUTTON_INT</span> net connects to GPIO22 on the CM4, while <span>PWR_CLR</span> connects to the nEXTRST pin on the CM4.</p>
+<p>nEXTRST is meant to indicate that power is good on the CM4, so it can be used for driving the <span>RST</span> pin on EXTernal devices that need to be powered when the Pi is powered. I assumed this would mean it would go low when the Linux kernel halts.<br/></p>
+<p>However, this approach has two problems:</p>
+<ol><li>Turns out that nEXTRST is <em>not</em> pulled low when the kernel halts.</li><li>nEXTRST stays low for around 200ms after 5V power is applied to the CM4.</li></ol>
+<p>The second problem is more severe. After asserting the OUT pin, the MAX16150 will ignore the <span>CLR</span> pin for 2x its interrupt period (32ms on my version. Different versions exist, but they're less "add to your Digikey cart" and more "call the factory to custom order".) When that 64ms has elapsed, if <span>CLR</span> is still low, the MAX16150 deasserts OUT again, which cuts power to the downstream device.</p>
+<p>It turns out that this isn't an artificial delay on the nEXTRST pin - it actually just takes about 200ms for the CM4's 3.3V supply to start when 5V is applied.</p>
+<p>I had originally worked around this by cutting the <span>CLR</span>&lt;-&gt;nEXTRST trace on the PCB and then connecting <span>CLR</span> to 5V with a resistor. I then connected an extra push button between <span>CLR</span> and ground, to give me a way to cut power. However, this meant the Pi had no way to turn off its own power, and I had to manually click that second button any time I did a shutdown, or it would sit there, halted, drawing a nontrivial amount of power.</p>
+<p>I've improved on this bodge in a way that I think is suitable to incorporate into my next PCB revision:</p>
+<ul><li>I cut the PCB trace near the CM4 connector to disconnect it from the CM4's nEXTRST pin.</li><li>I bridged it to a GPIO trace that I'm not currently using.</li><li>I changed the 5V&lt;-&gt;<span>INT</span> resistor for a 10k, and added a 20k resistor to ground.</li></ul>
+<p>This causes the <span>INT</span> pin to come up as soon as the 5V supply is good, but also keeps the voltage at a safe enough level for the GPIO pin, which is only 3.3V-tolerant.</p>
+<p>At bootup, the GPIO pin seems to have a weak pull-down resistor, so the <span>INT</span> pin ends up with around 3.0V on it instead of 3.3V, but this is high enough for the MAX16150 to treat it as high.</p>
+<p>With the following configuration in /boot/config.txt, I now have startup and shutdown behavior that works exactly as I intended.</p>
+<pre>dtoverlay=gpio-shutdown,gpio_pin=22,active_low=1,gpio_pull=up,debounce=10
+dtoverlay=gpio-poweroff,gpiopin=17,active_low=1
+</pre>
+<p>I should have a few more updates for you shortly - I'm working on a new revision of the PCB which incorporates these fixes, as well as some other modifications I've had to make, and I'd like to double-check some other functionality before I commit to another PCB spin, in case I need to make more changes.</p>
