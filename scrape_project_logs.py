@@ -15,6 +15,14 @@ PROJECT_NUM = "177256"
 SHORT_NAME = "pipad"  # HTML and images will be put in subdirectories with this name
 TITLE_PREFIX = "Pipad: "
 
+
+def parse_post_time(post_time):
+    if post_time.endswith("minutes ago"):
+        minutes = int(post_time.split(" ")[0])
+        return datetime.datetime.now().astimezone() - datetime.timedelta(minutes=minutes)
+    return datetime.datetime.strptime(post_time, "%m/%d/%Y at %H:%M").astimezone()
+
+
 def scrape_individual_log(url):
     slug = posixpath.basename(urllib.parse.urlparse(url).path)
     html_file_path = f"content/posts/{SHORT_NAME}/logs/{slug}.html"
@@ -29,7 +37,7 @@ def scrape_individual_log(url):
 
     title = soup.find_all("h1")[0].get_text()
     post_time = soup.find_all("span", {"class": "time-card"})[0].get_text()
-    post_time_dt = datetime.datetime.strptime(post_time, "%m/%d/%Y at %H:%M").astimezone()
+    post_time_dt = parse_post_time(post_time)
 
     header = textwrap.dedent(f"""
         ---
