@@ -20,7 +20,13 @@ def parse_post_time(post_time):
     if post_time.endswith("minutes ago"):
         minutes = int(post_time.split(" ")[0])
         return datetime.datetime.now().astimezone() - datetime.timedelta(minutes=minutes)
-    return datetime.datetime.strptime(post_time, "%m/%d/%Y at %H:%M").astimezone()
+    try:
+        return datetime.datetime.strptime(post_time, "%m/%d/%Y at %H:%M").astimezone()
+    except ValueError:
+        return datetime.datetime.strptime(
+            input("Couldn't parse post time {post_time}; please give me a date in the format `%m/%d/%Y at %H:%M`: "),
+            "%m/%d/%Y at %H:%M"
+        ).astimezone()
 
 
 def scrape_individual_log(url):
