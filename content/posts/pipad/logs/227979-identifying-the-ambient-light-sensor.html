@@ -1,0 +1,245 @@
+---
+title: 'Pipad: Identifying the ambient light sensor'
+date: 2024-03-05T05:39:00-08:00
+draft: false
+---
+<p><em>View or comment on this project log on <a href="https://hackaday.io/project/177256/log/227979-identifying-the-ambient-light-sensor">Hackaday.io</a></em></p>
+
+<p>I've long been ignoring the ambient light sensor flex cable that's part of the iPad's display assembly. This connects to a 24-pin board-to-board connector on the logic board, pictured on the right edge here:</p>
+<figure><img src="/img/pipad/4417321612560996981.jpg"/></figure>
+<p>Only 7 of the 24 pins are used:</p>
+<ul><li>3.0V</li><li>SCL and SDA for i2c</li><li>ALS_INT_L</li><li>COMP_RST_L</li><li>COMP_INT_L</li></ul>
+<p>The other 17 pins are ground.</p><p>(Fun fact: this connector, the AA03-S024VA1, is also what they used for the camera in the iPhone 3G, though with a different pin configuration. Maybe they had a lot of extras and decided to reuse it on the iPad. It's not like they were low on space in the iPad, so using a larger-than-necessary connector wouldn't be a big deal.)<span></span></p>
+<p>The last two pins are connected in the iPad schematics to "COMPASS_RST_L" and "COMPASS_INT_L", </p>
+<p>I've been including this connector in all my prototype PCBs, and I also created a breakout board for it. This weekend, I wired up the breakout board to a Pi 4 (just power and I2C, none of the interrupt/reset pins) and got to work trying to figure out what ambient light sensor IC is used.</p>
+<h1>What's i2c address 0x39?</h1>
+<p>By wiring up the breakout board and connecting it to a Raspberry Pi, we can see that this cable only seems to have one device on it, at address 0x39: </p>
+<pre>
+meatmanek@pi4:~ $ i2cdetect -y 1
+     0  1  2  3  4  5  6  7  8  9  a  b  c  d  e  f
+00:                         -- -- -- -- -- -- -- -- 
+10: -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- 
+20: -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- 
+30: -- -- -- -- -- -- -- -- -- 39 -- -- -- -- -- -- 
+40: -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- 
+50: -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- 
+60: -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- 
+70: -- -- -- -- -- -- -- --    </pre>
+<p>That's odd. I was expecting two devices: one for the compass, one for the ambient light sensor. Maybe it's a single IC?</p>
+<p>Searching the internet for "i2c address 0x39" brought me to <a href="https://i2cdevices.org/addresses/0x39">https://i2cdevices.org/addresses/0x39</a> which gives us a few options:</p>
+<ul><li><a href="https://i2cdevices.org/devices/apds-9960">APDS-9960</a> - IR/Color/Proximity Sensor</li><li><a href="https://i2cdevices.org/devices/pcf8574ap">PCF8574AP</a> - I²C-bus to parallel port expander</li><li><a href="https://i2cdevices.org/devices/saa1064">SAA1064</a> - 4-digit LED driver</li><li><a href="https://i2cdevices.org/devices/tsl2561">TSL2561</a> - light sensor</li><li><a href="https://i2cdevices.org/devices/veml6070">VEML6070</a> - UVA Light Sensor with I2C Interface</li></ul>
+<p>Hmm. 3 of those could be ambient light sensors (APDS-9960, TSL2561, VEML6070), but also surely there are more devices out there that use this address.</p>
+<p>Not wanting to tear apart my iPad more than necessary, I took another look at iFixit's images of this flex cable: </p>
+<figure><img src="/img/pipad/WoJfDOpftUiAQm1i.full"/></figure><p>Enhance:</p><figure><img src="/img/pipad/1628681709624637916.jpg"/></figure>
+<figure><img src="/img/pipad/6cDCJZIlHZQ4ZvoK.full"/></figure><p>Enhance:<br/></p><figure><img src="/img/pipad/8752731709624774319.jpg"/></figure><p>Looks like there's just one IC and a decoupling capacitor.<br/></p>
+<p>Here's what we know about this IC:</p>
+<ul><li>It's the ambient light sensor.</li><li>It's a 6-pin DFN footprint, but the size is hard to determine.<ul><li>The top of the chip is clear, exposing the die. (Makes sense for a light sensor.)</li><li>We can see the 6 bonding wire pads.</li></ul></li><li>It uses I2C.</li><li>It supports a power supply voltage of 3.0V</li></ul>
+<p>(I guess the compass may have been removed before the iPad shipped?)</p>
+<p>Looking at the three options from i2cdevices.org:</p>
+<p>The APDS-9960 does RGB and gesture detection, and doesn't look right:</p>
+<figure><img src="/img/pipad/3595-06.jpg"/><figcaption>The APDS-9960 has a black plastic shroud, which our IC doesn't have. Also it has too many features to be an ambient light sensor.</figcaption></figure>
+<p>The VEML-6070 is a UV sensor, which doesn't make sense, and also it doesn't look right:</p>
+<figure><img src="/img/pipad/2899-01.jpg"/></figure>
+<p>The TSL2561 looks promising:</p>
+<figure><img src="/img/pipad/439-01.jpg"/><figcaption>The TSL2561 seems to be the right shape, not obviously the wrong color, and is the right kind of IC (Luminosity/Lux/Light sensor)</figcaption></figure>
+<p>To check if this is correct, I got the Adafruit python driver for this chip:</p>
+<pre class="hljs ruby">meatmanek@pi4<span class="hljs-symbol">:~</span> $ python3 -m venv venv
+meatmanek@pi4<span class="hljs-symbol">:~</span> $ . venv/bin/activate
+(venv) meatmanek@pi4<span class="hljs-symbol">:~</span> $  pip3 install adafruit-circuitpython-tsl2561
+...
+Successfully installed Adafruit-Blinka-<span class="hljs-number">8.34</span>.<span class="hljs-number">0</span> Adafruit-Circuitpython-ConnectionManager-<span class="hljs-number">1.0</span>.<span class="hljs-number">1</span> Adafruit-PlatformDetect-<span class="hljs-number">3.62</span>.<span class="hljs-number">0</span> Adafruit-PureIO-<span class="hljs-number">1.1</span>.<span class="hljs-number">11</span> RPi.GPIO-<span class="hljs-number">0</span>.<span class="hljs-number">7.1</span> adafruit-circuitpython-busdevice-<span class="hljs-number">5.2</span>.<span class="hljs-number">6</span> adafruit-circuitpython-requests-<span class="hljs-number">3.0</span>.<span class="hljs-number">1</span> adafruit-circuitpython-tsl2561-<span class="hljs-number">3.3</span>.<span class="hljs-number">18</span> adafruit-circuitpython-typing-<span class="hljs-number">1.10</span>.<span class="hljs-number">2</span> pyftdi-<span class="hljs-number">0</span>.<span class="hljs-number">55.0</span> pyserial-<span class="hljs-number">3.5</span> pyusb-<span class="hljs-number">1.2</span>.<span class="hljs-number">1</span> rpi-ws281x-<span class="hljs-number">5.0</span>.<span class="hljs-number">0</span> sysv-ipc-<span class="hljs-number">1.1</span>.<span class="hljs-number">0</span> typing-extensions-<span class="hljs-number">4.10</span>.<span class="hljs-number">0</span>
+(venv) meatmanek@pi4<span class="hljs-symbol">:~</span> $ cat &gt; tsl2561.py
+<span class="hljs-comment"># This is from <a href="https://learn.adafruit.com/tsl2561/python-circuitpython">https://learn.adafruit.com/tsl2561/python-circuitpython</a></span>
+import board
+import busio
+import adafruit_tsl2561
+i2c = busio.I2C(board.SCL, board.SDA)
+sensor = adafruit_tsl2561.TSL2561(i2c)
+
+print(<span class="hljs-string">'Lux: {}'</span>.format(sensor.lux))
+print(<span class="hljs-string">'Broadband: {}'</span>.format(sensor.broadband))
+print(<span class="hljs-string">'Infrared: {}'</span>.format(sensor.infrared))
+print(<span class="hljs-string">'Luminosity: {}'</span>.format(sensor.luminosity))
+(venv) meatmanek@pi4<span class="hljs-symbol">:~</span> $ python ./tsl2561.py 
+Traceback (most recent call last):
+  File <span class="hljs-string">"/home/meatmanek/./tsl2561.py"</span>, line <span class="hljs-number">5</span>, <span class="hljs-keyword">in</span> &lt;<span class="hljs-class"><span class="hljs-keyword">module</span>&gt;</span>
+    sensor = adafruit_tsl2561.TSL2561(i2c)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File <span class="hljs-string">"/home/meatmanek/venv/lib/python3.11/site-packages/adafruit_tsl2561.py"</span>, line <span class="hljs-number">75</span>, <span class="hljs-keyword">in</span> __init_<span class="hljs-number">_</span>
+    raise RuntimeError(
+<span class="hljs-symbol">RuntimeError:</span> Failed to find TSL2561! Part <span class="hljs-number">0x0</span> Rev <span class="hljs-number">0x0</span></pre>
+<p>From reading the code, it seems to look at register 0x0A and report the upper 4 bits as the part number and the lower 4 bits as the revision number. The TSL2561 should have the part number set to 0x5.</p>
+<p>Maybe it's some other chip. Let's see how many other <a href="https://www.digikey.com/en/products/filter/optical-sensors/ambient-light-ir-uv-sensors/536?s=N4IgjCBcpgbFoDGUBmBDANgZwKYBoQB7KAbRAHYAOSgTgCY6QC7ZyGJnW6BWcpkFm1gAGfoJbxOQvlLrkOArmzGsALMO4ryAZhqipqsPsXlDMk4ckmR5wbDCqt97U9g1XjKaxdeqW8jSaUpTCCrDUdKEgALoEAA4ALlAgAMoJAE4AlgB2AOYgAL4EhgggyJDo2PhEpCDa3G5glPwhPPUtwpHazQTasKzCPiDqhtwQsSCJyWlZeYXM5PDQZaiYuATEkGS8IUOq2nTaAfzcgeTmYCw8jgSXsDwXdJSL7rdP50OXlLqe4NqdlBuf06NCBYAODAuEO0YO0fXC-HBqj0QORYG4DURMNBfAmU0gqQyOXyBSKIE0yziUDA8SpkB4pKAA">6-pin I2C light sensors that support 3.0V power</a> exist on Digikey. 124? We're going to need more information. I decided to pull the flex PCB off my display to get a higher-resolution photo of the IC itself.</p>
+<figure><img src="/img/pipad/6692401709619351952.jpg"/><figcaption>A photo taken with my USB microscope, showing the ambient light sensor IC.</figcaption></figure>
+<p>This is actually surprisingly helpful. We can see the bond wires and the patterns on the IC, which we can try to match against the Digi-Key photos.</p>
+<p>The TSL2561 looks promising, but we know that the Adafruit library for it doesn't work: </p>
+<figure><a href="https://www.digikey.com/en/products/detail/ams-osram-usa-inc/TSL2561FN/3095178"><img src="/img/pipad/6-DFN-Sensor.jpg"/></a><figcaption>The TSL2561 photo on Digi-Key. This is also the same photo they use for the TSL2571.<br/></figcaption></figure>
+<p>Other manufacturers look different:</p>
+<figure><a href="https://www.digikey.com/en/products/detail/broadcom-limited/APDS-9306-065/6685409"><img src="/img/pipad/MFG_516_APDS-9306-065.jpg"/></a><figcaption>The APDS-9306-063 has the bond wires going to the wrong place.</figcaption></figure>
+<figure><a href="https://www.digikey.com/en/products/detail/vishay-semiconductor-opto-division/VEML6035/10259327"><img src="/img/pipad/MFG_VEML6035.jpg"/></a><figcaption>Wrong bond wires again on the VEML6035, plus the black background.</figcaption></figure>
+<p>Based on this, I'm assuming it's another chip from ams-OSRAM, in the same family as the TSL2561.</p>
+<p>Adafruit also has a driver for the TSL2591, since they sell that breakout board too. Let's try that?</p>
+<pre>
+meatmanek@pi4:~ $ cat &gt; tsl2591.py
+# adapted from https://learn.adafruit.com/adafruit-tsl2591/python-circuitpython
+import board
+import adafruit_tsl2591
+i2c = board.I2C()
+sensor = adafruit_tsl2591.TSL2591(i2c, address=0x39)
+
+print('Light: {0}lux'.format(sensor.lux))
+print('Visible: {0}'.format(sensor.visible))
+print('Infrared: {0}'.format(sensor.infrared))
+
+meatmanek@pi4:~ $ . venv/bin/activate
+(venv) meatmanek@pi4:~ $ python ./tsl2591.py 
+Traceback (most recent call last):
+  File "/home/meatmanek/./tsl2591.py", line 2, in 
+    import adafruit_tsl2591
+ModuleNotFoundError: No module named 'adafruit_tsl2591'
+
+(venv) meatmanek@pi4:~ $ pip3 install adafruit-circuitpython-tsl2591
+Looking in indexes: https://pypi.org/simple, <a href="https://www.piwheels.org/simple">https://www.piwheels.org/simple</a>
+...
+Successfully installed adafruit-circuitpython-tsl2591-1.3.12
+(venv) meatmanek@pi4:~ $ python ./tsl2591.py 
+Traceback (most recent call last):
+  File "/home/meatmanek/./tsl2591.py", line 4, in 
+    sensor = adafruit_tsl2591.TSL2591(i2c, address=0x39)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/meatmanek/venv/lib/python3.11/site-packages/adafruit_tsl2591.py", line 132, in __init__
+    raise RuntimeError("Failed to find TSL2591, check wiring!")
+RuntimeError: Failed to find TSL2591, check wiring!</pre>
+<p> Looking at line 132 in adafruit_tsl2591.py, it looks like it's also checking a register to see if the chip has the right device ID:</p>
+<pre class="hljs python">    <span class="hljs-function"><span class="hljs-keyword">def</span> <span class="hljs-title">__init__</span><span class="hljs-params">(self, i2c: I2C, address: int = _TSL2591_ADDR)</span> -&gt; <span class="hljs-keyword">None</span>:</span>
+        ...
+        <span class="hljs-comment"># Verify the chip ID.</span>
+        <span class="hljs-keyword">if</span> self._read_u8(_TSL2591_REGISTER_DEVICE_ID) != <span class="hljs-number">0x50</span>:
+            <span class="hljs-keyword">raise</span> RuntimeError(<span class="hljs-string">"Failed to find TSL2591, check wiring!"</span>)
+        ... </pre>
+<p>At this point I start looking through the Linux drivers for TSL* light sensor ICs:</p>
+<pre>
+meatmanek@brix1:~/raspberrypi-linux$ (ccache arm64) git grep -i ,tsl Documentation/
+Documentation/devicetree/bindings/iio/light/amstaos,tsl2563.yaml:$id: http://devicetree.org/schemas/iio/light/amstaos,tsl2563.yaml#
+Documentation/devicetree/bindings/iio/light/amstaos,tsl2563.yaml:      - amstaos,tsl2560
+Documentation/devicetree/bindings/iio/light/amstaos,tsl2563.yaml:      - amstaos,tsl2561
+Documentation/devicetree/bindings/iio/light/amstaos,tsl2563.yaml:      - amstaos,tsl2562
+Documentation/devicetree/bindings/iio/light/amstaos,tsl2563.yaml:      - amstaos,tsl2563
+Documentation/devicetree/bindings/iio/light/amstaos,tsl2563.yaml:        compatible = "amstaos,tsl2563";
+Documentation/devicetree/bindings/iio/light/amstaos,tsl2591.yaml:$id: http://devicetree.org/schemas/iio/light/amstaos,tsl2591.yaml#
+Documentation/devicetree/bindings/iio/light/amstaos,tsl2591.yaml:    const: amstaos,tsl2591
+Documentation/devicetree/bindings/iio/light/amstaos,tsl2591.yaml:            compatible = "amstaos,tsl2591";
+Documentation/devicetree/bindings/iio/light/tsl2583.yaml:      - amstaos,tsl2580
+Documentation/devicetree/bindings/iio/light/tsl2583.yaml:      - amstaos,tsl2581
+Documentation/devicetree/bindings/iio/light/tsl2583.yaml:      - amstaos,tsl2583
+Documentation/devicetree/bindings/iio/light/tsl2583.yaml:                compatible = "amstaos,tsl2581";
+Documentation/devicetree/bindings/iio/light/tsl2772.yaml:      - amstaos,tsl2571
+Documentation/devicetree/bindings/iio/light/tsl2772.yaml:      - amstaos,tsl2671
+Documentation/devicetree/bindings/iio/light/tsl2772.yaml:      - amstaos,tsl2771
+Documentation/devicetree/bindings/iio/light/tsl2772.yaml:      - amstaos,tsl2572
+Documentation/devicetree/bindings/iio/light/tsl2772.yaml:      - amstaos,tsl2672
+Documentation/devicetree/bindings/iio/light/tsl2772.yaml:      - amstaos,tsl2772
+Documentation/devicetree/bindings/iio/light/tsl2772.yaml:                compatible = "amstaos,tsl2772";
+Documentation/devicetree/bindings/spi/cdns,qspi-nor.yaml:      cdns,tslch-ns:
+Documentation/devicetree/bindings/trivial-devices.yaml:          - taos,tsl2550
+</pre>
+<p>Looks like there are 4 distinct drivers, some handling multiple chips. We've already eliminated the tsl2561 (handled by the tsl2563 driver) and the tsl2591 (handled by its own driver), let's try the tsl2571 (handled by the tsl2772 driver). I create this device tree overlay file:</p>
+<pre class="hljs cpp"><span class="hljs-meta">#<span class="hljs-meta-keyword">include</span> <span class="hljs-meta-string">&lt;dt-bindings/interrupt-controller/irq.h&gt;</span></span>
+
+/dts-v1/;
+/plugin/;
+
+/ {
+    compatible = <span class="hljs-string">"brcm,bcm2835"</span>;
+
+    fragment@<span class="hljs-number">0</span> {
+        target = &lt;&amp;i2c1&gt;;
+        __overlay__ {
+            <span class="hljs-meta">#address-cells = <span class="hljs-meta-string">&lt;1&gt;;</span></span>
+            <span class="hljs-meta">#size-cells = <span class="hljs-meta-string">&lt;0&gt;;</span></span>
+            status = <span class="hljs-string">"okay"</span>;
+
+            als@<span class="hljs-number">39</span> {
+                    compatible = <span class="hljs-string">"amstaos,tsl2571"</span>;
+                    reg = &lt;<span class="hljs-number">0x39</span>&gt;;
+            };
+        };
+    };
+};</pre>
+<p>This should get the tsl2772 driver loaded and configured to talk to a tsl2571 on i2c bus 1, address 0x39.</p>
+<p>When loading this dtoverlay file, I get an error:</p>
+<pre>
+meatmanek@pi4:~ $ sudo dtoverlay pipad-als
+meatmanek@pi4:~ $ dmesg | grep tsl
+[   61.915038] tsl2772 1-0039: supply vdd not found, using dummy regulator
+[   61.916654] tsl2772 1-0039: supply vddio not found, using dummy regulator
+[   61.943592] tsl2772 1-0039: tsl2772_probe: i2c device found does not match expected id
+[   61.943846] tsl2772: probe of 1-0039 failed with error -22
+</pre>
+<p>Looks like more of the same problems. I patched the code to print out the ID it found (0x93). Looking at the code in this driver that checks the chip ID, none of the chips supported by this driver would have ID 0x93 -- it only supports 0x0*, 0x2*, and 0x3*:</p>
+<pre class="hljs cpp"><span class="hljs-comment">/* Use the default register values to identify the Taos device */</span>
+<span class="hljs-keyword">static</span> <span class="hljs-keyword">int</span> tsl2772_device_id_verif(<span class="hljs-keyword">int</span> <span class="hljs-keyword">id</span>, <span class="hljs-keyword">int</span> target)
+{
+    <span class="hljs-keyword">switch</span> (target) {
+    <span class="hljs-keyword">case</span> tsl2571:
+    <span class="hljs-keyword">case</span> tsl2671:
+    <span class="hljs-keyword">case</span> tsl2771:
+        <span class="hljs-keyword">return</span> (<span class="hljs-keyword">id</span> &amp; <span class="hljs-number">0xf0</span>) == TRITON_ID;
+    <span class="hljs-keyword">case</span> tmd2671:
+    <span class="hljs-keyword">case</span> tmd2771:
+        <span class="hljs-keyword">return</span> (<span class="hljs-keyword">id</span> &amp; <span class="hljs-number">0xf0</span>) == HALIBUT_ID;
+    <span class="hljs-keyword">case</span> tsl2572:
+    <span class="hljs-keyword">case</span> tsl2672:
+    <span class="hljs-keyword">case</span> tmd2672:
+    <span class="hljs-keyword">case</span> tsl2772:
+    <span class="hljs-keyword">case</span> tmd2772:
+    <span class="hljs-keyword">case</span> apds9930:
+        <span class="hljs-keyword">return</span> (<span class="hljs-keyword">id</span> &amp; <span class="hljs-number">0xf0</span>) == SWORDFISH_ID;
+    }
+
+    <span class="hljs-keyword">return</span> -EINVAL;
+}</pre>
+<p>Around this time I decided to see if I could get a better photo of the IC:</p>
+<figure><img src="/img/pipad/1612481709623021822.jpg"/></figure>
+<p>Quite a bit clearer. </p>
+<p>Back to the search -- if we've tried the 2561, 2571, and 2591, maybe it's the 2581? I google for tsl2581 and this image pops up: </p>
+<figure><img src="/img/pipad/TSL2581FN.jpg"/></figure>
+<p>That looks extremely close (closer than the 2561/2571 image does), let's give it a try. Just a 1-character change to my device tree overlay file, and:</p>
+<pre>
+meatmanek@pi4:~ $ sudo dtoverlay pipad-als
+meatmanek@pi4:~ $ dmesg | grep tsl
+[  181.899420] tsl2583 1-0039: Light sensor found.
+</pre>
+<p>Well, that's encouraging!</p>
+<p>Since this is an iio driver, the sysfs files live in a directory under /sys/bus/iio/devices:</p>
+<pre>
+meatmanek@pi4:~ $ cd /sys/bus/iio/devices/iio\:device0/
+meatmanek@pi4:/sys/bus/iio/devices/iio:device0 $ ls
+in_illuminance_both_raw   in_illuminance_calibscale            in_illuminance_input_target                in_illuminance_ir_raw     of_node    uevent
+in_illuminance_calibbias  in_illuminance_calibscale_available  in_illuminance_integration_time            in_illuminance_lux_table  power
+in_illuminance_calibrate  in_illuminance_input                 in_illuminance_integration_time_available  name                      subsystem
+meatmanek@pi4:/sys/bus/iio/devices/iio:device0 $ cat in_illuminance_ir_raw 
+0
+meatmanek@pi4:/sys/bus/iio/devices/iio:device0 $ cat in_illuminance_both_raw 
+0
+</pre>
+<p>Turns out that once you read in_illuminance_input, then in_illuminance_ir_raw and in_illuminance_both_raw will have nonzero values:</p>
+<pre class="hljs ruby">meatmanek@pi4:/sys/bus/iio/devices/iio:device0 $ cat in_illuminance_input
+0
+meatmanek@pi4:/sys/bus/iio/devices/iio:device0 $ cat in_illuminance_ir_raw 
+130
+meatmanek@pi4:/sys/bus/iio/devices/iio:device0 $ cat in_illuminance_both_raw 
+1025
+</pre>
+<p>Success! Hopefully this is actually the right chip, and not just something that happens to have a similar register map. It does seem to respond to changes in brightness, and can even tell the difference between an incandescent light and LED lights:</p>
+<pre>
+# Under incandescent light:
+meatmanek@pi4:/sys/bus/iio/devices/iio:device0 $ grep ^ in_illuminance_*_raw
+in_illuminance_both_raw:677
+in_illuminance_ir_raw:133
+
+# Under white LED light, dimmed to give a similar "both" value:
+meatmanek@pi4:/sys/bus/iio/devices/iio:device0 $ grep ^ in_illuminance_*_raw
+in_illuminance_both_raw:687
+in_illuminance_ir_raw:87</pre>
+<p>Now I just need to get this thing re-adhered to the back of the LCD without looking too ugly.</p>

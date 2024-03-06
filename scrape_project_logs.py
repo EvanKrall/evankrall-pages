@@ -3,6 +3,7 @@
 import urllib.parse
 import os
 import textwrap
+import traceback
 import requests
 from bs4 import BeautifulSoup
 import datetime
@@ -24,7 +25,7 @@ def parse_post_time(post_time):
         return datetime.datetime.strptime(post_time, "%m/%d/%Y at %H:%M").astimezone()
     except ValueError:
         return datetime.datetime.strptime(
-            input("Couldn't parse post time {post_time}; please give me a date in the format `%m/%d/%Y at %H:%M`: "),
+            input(f"Couldn't parse post time {post_time}; please give me a date in the format `%m/%d/%Y at %H:%M`: "),
             "%m/%d/%Y at %H:%M"
         ).astimezone()
 
@@ -70,10 +71,16 @@ def scrape_individual_log(url):
         img["src"] = f'/img/{SHORT_NAME}/{img_filename}'
         img_local_path = f"static/img/{SHORT_NAME}/{img_filename}"
         if not os.path.exists(img_local_path):
-            img_resp = requests.get(img_url)
-            img_resp.raise_for_status()
-            with open(img_local_path, 'wb+') as f:
-                f.write(img_resp.content)
+            try:
+                img_resp = requests.get(img_url, timeout=1.0)
+                img_resp.raise_for_status()
+            except:
+                print(f"Couldn't download {img_url}; please download it and put it at {img_local_path}")
+                traceback.print_exc()
+            else:
+                with open(img_local_path, 'wb+') as f:
+                    f.write(img_resp.content)
+
 
     full_contents = header + "\n" + post_content.decode_contents()
 
