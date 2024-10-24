@@ -1,0 +1,25 @@
+---
+title: 'Pipad: LineageOS 21 KonstaKANG is working'
+date: 2024-10-24T00:24:10.168088-07:00
+draft: false
+---
+<p><em>View or comment on this project log on <a href="https://hackaday.io/project/177256/log/233967-lineageos-21-konstakang-is-working">Hackaday.io</a></em></p>
+
+<p>I was able to get KonstaKANG's build of LineageOS 21 (Android 14) working on the Pipad!</p>
+<figure><img src="/img/pipad/6667781729753086881.jpeg"/></figure>
+<p>It's an almost-stock image, but I had to make a few changes to the kernel:<br/></p>
+<ul><li>Backport the sn65dsi83 driver from my <a href="https://github.com/EvanKrall/raspberrypi-linux/commits/pipad/">raspberrypi-linux kernel</a> (which is 5.15) to my fork of the <a href="https://github.com/EvanKrall/android_kernel_brcm_rpi/tree/android-14.0">raspberry-vanilla</a> kernel</li><li>Copy the appropriate dtoverlays over</li><li>Set a few things in config_user.txt:</li></ul>
+<pre class="hljs ini"><span class="hljs-comment"># User specific config.txt options</span>
+<span class="hljs-attr">dtoverlay</span>=gpio-shutdown,gpio_pin=<span class="hljs-number">22</span>,active_low=<span class="hljs-number">1</span>,gpio_pull=up,debounce=<span class="hljs-number">10</span>
+<span class="hljs-attr">dtoverlay</span>=gpio-power<span class="hljs-literal">off</span>,gpiopin=<span class="hljs-number">25</span>,active_low=<span class="hljs-number">1</span>
+<span class="hljs-attr">dtoverlay</span>=gpio-key,gpio=<span class="hljs-number">22</span>,keycode=<span class="hljs-number">116</span>,label=<span class="hljs-string">"POWER"</span>
+
+<span class="hljs-attr">dtoverlay</span>=vc4-kms-dsi-ti-sn65dsi83
+<span class="hljs-attr">dtoverlay</span>=pipad-touchscreen
+<span class="hljs-attr">dtparam</span>=spi=<span class="hljs-literal">off</span></pre>
+<p>Fortunately, the raspberry-vanilla kernel already comes with the Goodix touchscreen driver installed, so I didn't have to do anything to the pipad-touchscreen dtoverlay.</p>
+<p>I've only got a few bits of hardware integration working at the moment -- just the bare minimum:</p>
+<ul><li>LCD and touchscreen work.</li><li>The power button turns off the screen. (Ideally it would pull up a power menu?)<ul><li>It does not, however, turn the screen back on. I think it's trying to, but the sn65dsi83 isn't being reinitialized properly or something.</li></ul></li><li>When the system shuts down, it toggles the correct GPIO pin to disable the boost converter which converts battery voltage to 5V.</li></ul><p>I got stuck for a little while where it would only display the boot animation on the LCD, and never progress past this -- it seems this was due to my CM4 only having 1GB of RAM (KonstaKang says you need at least 2GB.)</p><p>I'm super excited about this! It's a much smoother experience using a proper touchscreen-oriented OS than trying to use Raspberry Pi OS. The on-screen keyboard pops up when necessary, all the tap targets are appropriately sized, etc. KonstaKang seems to have done an excellent job with e.g. hardware acceleration. Everything is super smooth, including Youtube playback in the browser.</p>
+<p>This is my first time using LineageOS (or any custom Android image), so I still need to learn a ton. I'd like to get GApps installed (but need to be able to get into TWRP first, so I need to expose a GPIO pin on one of the buttons). I might also play around with the AOSP build, to see how that differs.</p>
+<p>Hardware integration TODO list:</p>
+<ul><li>I need some way of toggling a GPIO pin that I can use to boot into TWRP mode (for doing low-level Android recovery-mode stuff). For some reason, on this revision of the board, all the physical buttons are handled by the i2c GPIO expander except for the Volume Down button, which is connected to nRPIBOOT (so I can use <a href="https://github.com/raspberrypi/usbboot">usbboot</a> without having to open up the device). I can probably just add a bodge wire from one of the remaining buttons to one of the spare GPIO pins on the CM4.</li><li>Device trees + put drivers into the kernel for:<ul><li>RTC</li><li>Audio codec<ul><li>I expect this will be a whole pile of fun.</li></ul></li><li>Ambient light sensor</li><li>GPIO expander (for the other buttons)</li><li>More gpio-key dtoverlays for all the other buttons, so that they get mapped to keyboard events</li><li>Battery charger</li></ul></li><li>Potentially cherry-pick my <a href="https://hackaday.io/project/177256-put-a-raspberry-pi-cm4-into-an-original-ipad/log/223863-nvme-hdq-sdio-and-curvy-pcb-traces">kernel patch for the HDQ protocol</a> to get battery levels</li><li>Figure out how to control the backlight from the Android UI.<ul><li>I can control the backlight from the CLI by editing /sys/class/backlight/backlight/brightness, so I'm not sure what needs to happen in Android-land.</li></ul></li><li>Improve the behavior of the power button.<ul><li>either make it shut down (or hibernate, ideally), pull up a software menu that would let me shut down, or fix the issue with it not being able to reenable the screen.</li></ul></li></ul>
